@@ -1,0 +1,46 @@
+[theme]
+base = "light"
+primaryColor = "#18794e"
+backgroundColor = "#faf8f4"
+secondaryBackgroundColor = "#fcfbf8"
+textColor = "#1a1a17"
+borderColor = "#e8e4dc"
+dataframeBorderColor = "#e8e4dc"
+dataframeHeaderBackgroundColor = "#fcfbf8"
+# Hanken Grotesk / IBM Plex Mono are loaded via a Google Fonts <link> injected
+# in style.css and applied with a CSS override, rather than guessed woff2 URLs
+# here — config.toml font fields fall back to the generic families below if
+# the web font hasn't painted yet, which is the safe default anyway.
+font = "sans-serif"
+headingFont = "sans-serif"
+codeFont = "monospace"
+baseRadius = "0.5rem"
+buttonRadius = "0.5rem"
+showWidgetBorder = false
+linkColor = "#18794e"
+greenColor = "#0ca30c"
+redColor = "#d03b3b"
+orangeColor = "#fab219"
+blueColor = "#2a78d6"
+chartCategoricalColors = [
+    "#2a78d6", "#eb6834", "#1baf7a", "#eda100",
+    "#e87ba4", "#008300", "#4a3aa7", "#e34948",
+]
+chartSequentialColors = [
+    "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5",
+    "#2a78d6", "#1c5cab", "#104281", "#0d366b",
+]
+chartDivergingColors = [
+    "#0d366b", "#2a78d6", "#9ec5f4", "#f0efec",
+    "#f2b3b2", "#e34948", "#8c1f1e",
+]
+
+[theme.sidebar]
+backgroundColor = "#fcfbf8"
+borderColor = "#e8e4dc"
+
+[server]
+headless = true
+
+[client]
+toolbarMode = "minimal"

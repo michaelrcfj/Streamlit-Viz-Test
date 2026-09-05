@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body, #chart { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+</head>
+<body>
+<div id="chart"></div>
+<script>
+/*
+ * Hand-rolled Streamlit custom-component bridge (no streamlit-component-lib
+ * dependency, no build step) — implements the protocol Streamlit's iframe
+ * host speaks directly via postMessage:
+ *   parent -> iframe : "streamlit:render"      { args, theme }
+ *   iframe -> parent : "streamlit:componentReady"
+ *   iframe -> parent : "streamlit:setFrameHeight"
+ *   iframe -> parent : "streamlit:setComponentValue"  { value }
+ * This is the deliberately "bring your own JS lib" path referenced in the
+ * scorecard — streamlit-echarts would be the shortcut; this proves the raw
+ * mechanism works against Streamlit 1.58 without it.
+ */
+let chart = null;
+
+function sendToStreamlit(type, extra) {
+  window.parent.postMessage(Object.assign({ type: type, isStreamlitMessage: true }, extra || {}), "*");
+}
+
+function setFrameHeight() {
+  sendToStreamlit("streamlit:setFrameHeight", { height: document.body.scrollHeight || 320 });
+}
+
+function setValue(value) {
+  sendToStreamlit("streamlit:setComponentValue", { value: value });
+}
+
+function buildOption(args) {
+  const kind = args.kind;
+  const theme = args.theme || {};
+  const textStyle = { fontFamily: theme.fontSans || "sans-serif", color: theme.inkSecondary || "#6b6760" };
+
+  if (kind === "donut") {
+    return {
+      textStyle: textStyle,
+      tooltip: { trigger: "item", formatter: "{b}: {c}% ({d}%)",
+        backgroundColor: theme.tileBg || "#fff", borderColor: theme.lineStrong || "#e3ddd2",
+        textStyle: { fontFamily: theme.fontMono || "monospace", color: theme.ink || "#1a1a17" } },
+      legend: { bottom: 0, textStyle: textStyle, itemWidth: 10, itemHeight: 10 },
+      color: args.colors || [],
+      series: [{
+        name: args.seriesName || "Share",
+        type: "pie",
+        radius: ["48%", "72%"],
+        avoidLabelOverlap: true,
+        itemStyle: { borderColor: theme.tileBg || "#fff", borderWidth: 2 },
+        label: { show: false },
+        emphasis: { label: { show: true, fontSize: 13, fontWeight: 600, fontFamily: theme.fontMono || "monospace" } },
+        data: args.data || [],
+      }],
+    };
+  }
+
+  if (kind === "bullet") {
+    // Horizontal bullet/variance chart: one category axis row per department,
+    // actual as a bar, budget as a marker line — replaces the source
+    // screenshot's radial gauges (a gauge encodes one number poorly; a
+    // bullet shows actual-vs-target at a glance across N categories).
+    const cats = args.categories || [];
+    return {
+      textStyle: textStyle,
+      grid: { left: 90, right: 24, top: 8, bottom: 8, containLabel: true },
+      tooltip: { trigger: "axis", axisPointer: { type: "shadow" },
+        backgroundColor: theme.tileBg || "#fff", borderColor: theme.lineStrong || "#e3ddd2",
+        textStyle: { fontFamily: theme.fontMono || "monospace", color: theme.ink || "#1a1a17" } },
+      xAxis: { type: "value", axisLabel: { color: theme.inkMuted || "#8f897e", fontSize: 10 },
+        splitLine: { lineStyle: { color: theme.line || "#e8e4dc" } } },
+      yAxis: { type: "category", data: cats, axisLabel: { color: theme.inkSecondary || "#6b6760", fontSize: 11 },
+        axisLine: { lineStyle: { color: theme.lineStrong || "#e3ddd2" } } },
+      series: [
+        {
+          name: "Actual", type: "bar", data: args.actual || [], barWidth: 14,
+          itemStyle: { color: (params) => (args.overBudget && args.overBudget[params.dataIndex]) ? (theme.critical || "#d03b3b") : (theme.accent || "#18794e"), borderRadius: [0, 4, 4, 0] },
+        },
+        {
+          name: "Budget", type: "scatter", symbol: "rect", symbolSize: [3, 22],
+          data: (args.budget || []).map((v, i) => [v, i]),
+          itemStyle: { color: theme.ink || "#1a1a17" },
+        },
+      ],
+    };
+  }
+
+  if (kind === "gauge") {
+    return {
+      textStyle: textStyle,
+      series: (args.gauges || []).map((g, i) => ({
+        type: "gauge",
+        center: [`${(i + 0.5) * (100 / (args.gauges.length || 1))}%`, "58%"],
+        radius: "70%",
+        min: 0, max: 100,
+        startAngle: 200, endAngle: -20,
+        progress: { show: true, width: 10, itemStyle: { color: g.color || theme.accent || "#18794e" } },
+        axisLine: { lineStyle: { width: 10, color: [[1, theme.line || "#e8e4dc"]] } },
+        axisTick: { show: false }, splitLine: { show: false }, axisLabel: { show: false },
+        pointer: { show: false },
+        title: { fontSize: 11, color: theme.inkSecondary || "#6b6760", offsetCenter: [0, "35%"] },
+        detail: { valueAnimation: true, fontSize: 16, fontFamily: theme.fontMono || "monospace",
+          color: theme.ink || "#1a1a17", offsetCenter: [0, "0%"], formatter: "{value}%" },
+        data: [{ value: g.value, name: g.name }],
+      })),
+    };
+  }
+  return {};
+}
+
+function render(event) {
+  const data = event.data;
+  if (!data || data.type !== "streamlit:render") return;
+  const args = data.args || {};
+  const el = document.getElementById("chart");
+  if (!chart) chart = echarts.init(el, null, { renderer: "svg" });
+  const option = buildOption(args);
+  chart.setOption(option, true);
+  if (args.clickable) {
+    chart.off("click");
+    chart.on("click", (params) => {
+      setValue({ name: params.name, seriesName: params.seriesName, dataIndex: params.dataIndex, value: params.value });
+    });
+  }
+  requestAnimationFrame(setFrameHeight);
+}
+
+window.addEventListener("message", render);
+window.addEventListener("resize", () => { if (chart) chart.resize(); setFrameHeight(); });
+sendToStreamlit("streamlit:componentReady", { apiVersion: 1 });
+setFrameHeight();
+</script>
+</body>
+</html>

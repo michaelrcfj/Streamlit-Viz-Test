@@ -1,0 +1,127 @@
+/* Grid geometry + tile chrome layered on top of native Streamlit theming
+   (see .streamlit/config.toml for surfaces/ink/accent — this file only
+   handles what config.toml cannot: fonts-not-in-the-base-stack, fixed tile
+   heights, header/eyebrow/footer chrome, the filter-chip row, and canvas
+   width). Every selector below is commented with what it targets so the
+   fragility this introduces is auditable — see the Limitations Scorecard. */
+
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root {
+  --font-sans: 'Hanken Grotesk', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+/* Apply the web fonts app-wide; config.toml's generic "sans-serif"/"monospace"
+   is the safe fallback if this stylesheet fails to load (CDN blocked, etc). */
+html, body, [class*="css"] {
+  font-family: var(--font-sans) !important;
+}
+code, pre, .stCodeBlock, [data-testid="stMetricValue"], .gfc-mono {
+  font-family: var(--font-mono) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Canvas width: the source dashboard is a fixed-grid BI page, not a fluid
+   article — cap it so a wide monitor doesn't stretch tiles into unreadable
+   ribbons. Targets Streamlit's main block container. */
+[data-testid="stAppViewContainer"] .main .block-container {
+  max-width: 1600px;
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+}
+
+/* Sticky page header strip (title + interaction-mode toggle). Targets our
+   own wrapper div, not a Streamlit internal, so it's the least fragile rule
+   in this file. */
+.gfc-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: #faf8f4;
+  padding: 0.5rem 0 0.75rem 0;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid #e8e4dc;
+}
+
+/* Tile chrome: every tile is an st.container(border=True); this restyles
+   Streamlit's generic bordered-container div. Fragile point: relies on
+   data-testid="stVerticalBlockBorderWrapper" staying stable across
+   Streamlit versions. */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > div.gfc-tile-marker) {
+  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid #e8e4dc;
+  box-shadow: 0 1px 2px rgba(40,34,24,0.03);
+  padding: 0.25rem 0.25rem 0.5rem 0.25rem;
+  transition: box-shadow 0.15s ease;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > div.gfc-tile-marker):hover {
+  box-shadow: 0 4px 12px rgba(40,34,24,0.08);
+}
+
+/* Tile header row: eyebrow label + title, rendered as markdown inside the
+   tile via a small helper (see src/components/tile.py). */
+.gfc-tile-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #1a1a17;
+  letter-spacing: 0.01em;
+  margin: 0.15rem 0 0.35rem 0.1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.gfc-tile-title .gfc-icon { opacity: 0.55; font-size: 0.85em; }
+
+/* KPI stat tile */
+.gfc-kpi-eyebrow {
+  font-size: 0.72rem;
+  color: #8f897e;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.15rem;
+}
+.gfc-kpi-value {
+  font-family: var(--font-mono);
+  font-size: 1.65rem;
+  font-weight: 600;
+  color: #1a1a17;
+  line-height: 1.1;
+}
+.gfc-kpi-delta {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  margin-top: 0.25rem;
+}
+.gfc-kpi-delta.good { color: #0ca30c; }
+.gfc-kpi-delta.bad { color: #d03b3b; }
+.gfc-kpi-sub { font-size: 0.72rem; color: #8f897e; margin-top: 0.1rem; }
+
+/* Active-filter chip row */
+.gfc-chip-row { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0.3rem 0 0.6rem 0; }
+.gfc-chip {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.72rem; font-family: var(--font-mono);
+  padding: 0.18rem 0.55rem; border-radius: 999px;
+  background: #eef4ef; color: #18794e; border: 1px solid #c2ddd1;
+}
+.gfc-chip.selection { background: #fdf2ea; color: #b5591a; border-color: #f0d3b8; }
+
+/* Perf footer strip */
+.gfc-perf {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: #8f897e;
+  padding: 0.4rem 0;
+  border-top: 1px solid #e8e4dc;
+  margin-top: 0.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.1rem;
+}
+.gfc-perf b { color: #6b6760; }
+
+/* Compact plotly/vega toolbar so it doesn't dominate a small tile */
+.js-plotly-plot .plotly .modebar { opacity: 0.35; transition: opacity 0.15s; }
+.js-plotly-plot .plotly .modebar:hover { opacity: 1; }
