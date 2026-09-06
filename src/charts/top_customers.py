@@ -6,6 +6,7 @@ aggregation cube carries, so it can't cross-filter the other tiles."""
 import pandas as pd
 import streamlit as st
 
+from src import theme as T
 from src.data import metrics as M
 
 
@@ -21,7 +22,7 @@ def render(tx_filtered: pd.DataFrame, tile_key: str):
         display,
         width='stretch',
         hide_index=True,
-        height=290,
+        height=T.CHART_HEIGHT,
         key=tile_key,
         column_config={
             "customer": st.column_config.TextColumn("Customer", width="medium"),

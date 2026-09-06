@@ -26,7 +26,7 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
 
-REGIONS = ["NA", "EMEA", "APAC", "LATAM"]
+REGIONS = ["NAM", "EMEA", "APAC", "LATAM"]  # NAM not "NA" -- reads too much like "N/A"
 REGION_WEIGHT = [0.42, 0.33, 0.18, 0.07]
 
 PRODUCTS = ["Software", "Services", "Hardware"]

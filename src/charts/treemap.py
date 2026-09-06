@@ -46,13 +46,20 @@ def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
 
     fig = go.Figure(go.Treemap(
         labels=labels, parents=parents, values=values, ids=ids,
+        # Plotly treemaps default to branchvalues="remainder", which treats a
+        # parent's own value as ADDITIONAL to its children's — since our
+        # parent value already equals the sum of its children, that silently
+        # doubles the denominator and leaves ~50% of each branch rendered as
+        # blank parent-colored space. "total" tells Plotly the parent value
+        # already accounts for its children.
+        branchvalues="total",
         marker=dict(colors=colors, line=dict(width=2, color=T.TILE_BG)),
         textfont=dict(family=T.FONT_SANS, size=12, color="white"),
         texttemplate="<b>%{label}</b><br>$%{value:,.0f}",
         hovertemplate="<b>%{label}</b><br>$%{value:,.0f}<extra></extra>",
         pathbar=dict(visible=True, textfont=dict(size=11, color=T.INK_SECONDARY)),
     ))
-    fig.update_layout(**{k: v for k, v in T.PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")}, height=300)
+    fig.update_layout(**{k: v for k, v in T.PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")}, height=T.CHART_HEIGHT)
 
     event = st.plotly_chart(fig, width='stretch', key=tile_key, on_select="rerun", selection_mode="points")
     points = (event or {}).get("selection", {}).get("points", [])

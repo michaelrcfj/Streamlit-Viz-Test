@@ -20,6 +20,6 @@ def render(cashflow: pd.DataFrame, tile_key: str):
             tooltip=[alt.Tooltip("month:N", title="Month"), alt.Tooltip("flow:N", title="Flow"),
                      alt.Tooltip("amount:Q", title="Amount", format="$,.0f")],
         )
-        .properties(height=230)
+        .properties(height=T.CHART_HEIGHT)
     )
     st.altair_chart(chart, width='stretch', key=tile_key)

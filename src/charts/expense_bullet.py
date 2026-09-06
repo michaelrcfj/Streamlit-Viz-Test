@@ -6,9 +6,12 @@ is still demonstrable via the same JS bridge."""
 import pandas as pd
 import streamlit as st
 
+from src import theme as T
 from src.components.echarts import echarts_bullet, echarts_gauges
 from src.data import metrics as M
 from src.state import Selection, consume_once, set_selection_if_changed
+
+_CHART_H = T.CHART_HEIGHT - T.CONTROL_ROW_HEIGHT  # this tile also has the gauge-variant toggle
 
 
 def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, tile_key: str):
@@ -28,7 +31,7 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
              "color": "#d03b3b" if row["pct_of_budget"] > 100 else "#18794e"}
             for _, row in top3.iterrows()
         ]
-        echarts_gauges(gauges, key=f"{tile_key}_gauge")
+        echarts_gauges(gauges, key=f"{tile_key}_gauge", height=_CHART_H)
         return
 
     clicked = echarts_bullet(
@@ -37,6 +40,7 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
         budget=df["budget"].round(0).tolist(),
         over_budget=(df["pct_of_budget"] > 100).tolist(),
         key=tile_key,
+        height=_CHART_H,
     )
     if clicked and clicked.get("name"):
         dept = clicked["name"]

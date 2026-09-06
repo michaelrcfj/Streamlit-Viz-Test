@@ -1,199 +1,118 @@
-"""Limitations Scorecard — the actual point of this project. Scores each of
-the five requirements plus the gaps identified up front, with the workaround
-used, what was actually observed, and an honest verdict against Tableau."""
+"""Limitations Scorecard — the actual point of this project. A traffic-light
+summary up top, then a collapsed-by-default detail per item below."""
 
 import streamlit as st
 
 st.markdown("## 🧪 Limitations Scorecard — Streamlit vs Tableau")
 st.caption(
-    "Findings from building the Global FinCorp replica. Verdicts are qualitative "
-    "judgment calls made while building this prototype, not a benchmark suite — "
-    "re-run the perf panel on the dashboard page yourself for your own numbers."
+    "Findings from building the Global FinCorp replica. Verdicts are judgment calls "
+    "made while building this prototype, not a benchmark suite."
 )
 
 VERDICT_COLOR = {"Strong": "🟢", "Workable": "🟡", "Weak": "🔴"}
 
+ITEMS = [
+    dict(
+        group="The 5 requirements", title="1. Generate the visuals", verdict="Strong",
+        summary="Plotly + Altair + ECharts cover every chart type in the source screenshot with no gaps.",
+        workaround="Plotly for cross-filtering charts, Altair for lighter declarative tiles, a hand-rolled ECharts component for the bullet/gauge and donut.",
+        finding="The treemap and waterfall took no more code than a bar chart — Plotly's breadth is the pleasant surprise. The bullet-instead-of-gauges and single-hue treemap redesigns are improvements, not workarounds.",
+        tableau="Tableau's gallery is still broader out of the box (no-code gauges, box plots), but nothing here was actually missing.",
+    ),
+    dict(
+        group="The 5 requirements", title="2. Interactive cross-filtering", verdict="Workable",
+        summary="Click-to-filter works, but two real bugs — both about Streamlit's sticky selection state — took real debugging to find.",
+        workaround="One `Selection` object in session_state, written by whichever tile's `on_select` fired; every other tile re-filters by it, excluding the source tile so it keeps its own context.",
+        finding="**Bug 1:** selection state persists across reruns, so reading it once at the top of the script and writing it lower down meant every tile always filtered on the *previous* run — fixed with a `consume_once()` guard + explicit `st.rerun()`. **Bug 2 (found only via real browser testing, not `AppTest`):** a chart that restyled its own bars based on the selection it had just emitted changed its own figure enough to make Streamlit remount the widget mid-flow, wiping the very selection it just set. Rule now: a chart must never restyle itself from its own selection.",
+        tableau="Tableau's dashboard actions are declarative with no equivalent ordering trap — more code here for more per-tile flexibility.",
+    ),
+    dict(
+        group="The 5 requirements", title="3. Global filters + shareable URL", verdict="Strong",
+        summary="Sidebar filters and chart selection both sync to the URL — genuinely copy-paste shareable.",
+        workaround="Filters + selection live in `st.session_state`, mirrored to `st.query_params`, rehydrated before widgets are instantiated.",
+        finding="Solid once built, but `st.query_params` writes must happen in a specific order relative to widget creation or you get a silent reset loop — not well documented.",
+        tableau="On par with a Tableau published-view URL, at the cost of ~20 lines of code instead of zero.",
+    ),
+    dict(
+        group="The 5 requirements", title="4. Free tile placement", verdict="Weak",
+        summary="Row/column layout only — no true grid, no spanning, and the chrome CSS is pinned to unstable internals.",
+        workaround="`st.columns` for structure, `st.container(border=True)` per tile, an injected CSS layer for chrome and fixed heights.",
+        finding="Close to the screenshot visually, but a tile can't span rows, and the CSS selectors that make tile chrome look intentional target Streamlit's internal DOM, which isn't a public API.",
+        tableau="The single biggest gap — Tableau's drag-to-any-pixel canvas has no real equivalent here short of a third-party grid component.",
+    ),
+    dict(
+        group="The 5 requirements", title="5. Bring your own JS chart library", verdict="Workable",
+        summary="A hand-rolled ECharts component works end-to-end, including clicks flowing into the same selection state as native charts.",
+        workaround="Zero-build custom component (`src/components/echarts/index.html`) loading ECharts from a CDN, speaking Streamlit's postMessage protocol by hand.",
+        finding="Works, but reimplements plumbing a proper React + `streamlit-component-lib` build gives for free, and reloads its full HTML/JS on every rerun rather than patching state.",
+        tableau="Tableau has no real equivalent extension point for a dashboard author without its separate Extensions API.",
+    ),
+    dict(
+        group="Gaps beyond the 5", title="Rerun latency & scale (100k rows)", verdict="Workable",
+        summary="A small pre-aggregated cube keeps filtering sub-millisecond even at 1M rows; full-script reruns are the real cost.",
+        workaround="A cached `build_cube()` groupby (~3-4k rows) computed once; every interaction re-filters that small cube, not the 100k-row source.",
+        finding="Cube filtering was sub-ms even in a 1M-row ad hoc test. The real cost is that every click reruns the *whole* page script — total time is the sum of every tile's render, not just the one that changed.",
+        tableau="Tableau's extract engine doesn't rerun a whole dashboard per click; the gap shows up first under concurrency, not row count.",
+    ),
+    dict(
+        group="Gaps beyond the 5", title="URL state sync", verdict="Strong",
+        summary="Same mechanism as requirement #3 — no additional gap.",
+        workaround="See requirement #3.",
+        finding="No gap beyond the ordering subtlety already noted there.",
+        tableau="On par with a Tableau published view URL.",
+    ),
+    dict(
+        group="Gaps beyond the 5", title="Export: CSV / PNG / PDF", verdict="Weak",
+        summary="CSV and chart PNG are solid; whole-dashboard PDF is an honest failure that misses the ECharts tiles and all CSS chrome.",
+        workaround="Per-tile CSV; PNG via `kaleido`/`vl-convert`; whole-dashboard PDF via server-side re-render + `fpdf2`.",
+        finding="The PDF path re-renders figures from scratch rather than capturing the live page — a faithful version would need a headless-browser screenshot pipeline outside Streamlit entirely.",
+        tableau="Tableau's one-click PDF/PowerPoint export captures everything. This is a real, un-worked-around gap.",
+    ),
+    dict(
+        group="Gaps beyond the 5", title="Rich tables & tooltips", verdict="Strong",
+        summary="`column_config` gets sparklines and progress bars for a few keyword arguments — close to Tableau-grade for free.",
+        workaround="`st.column_config` (`ProgressColumn`, `LineChartColumn`) plus custom Plotly/Altair tooltips.",
+        finding="No real gap for this use case.",
+        tableau="On par; Tableau still wins on ad-hoc conditional formatting a business user can set without code.",
+    ),
+]
 
-def row(title, verdict, workaround, finding, tableau_comparison):
-    with st.container(border=True):
-        c1, c2 = st.columns([4, 1])
-        with c1:
-            st.markdown(f"#### {title}")
-        with c2:
-            st.markdown(f"### {VERDICT_COLOR[verdict]} {verdict}")
-        st.markdown(f"**Workaround used:** {workaround}")
-        st.markdown(f"**What we found:** {finding}")
-        st.markdown(f"**vs Tableau:** {tableau_comparison}")
-
-
-st.markdown("### The 5 requirements")
-
-row(
-    "1. Generate the visuals",
-    "Strong",
-    "Plotly for cross-filtering charts (combo trend, treemap, waterfall, dept spend), "
-    "Altair for lighter declarative tiles (regional margin, cash flow, EBITDA), a hand-rolled "
-    "ECharts component for the bullet/gauge and donut tiles.",
-    "Every chart type in the source screenshot has a real equivalent. The treemap and waterfall "
-    "took no more code than the bar charts — Plotly's chart-type breadth is the pleasant surprise here. "
-    "The redesign (bullet instead of gauges, single-hue nested treemap instead of rainbow) was a "
-    "deliberate improvement, not a limitation.",
-    "Tableau's chart gallery is still broader out of the box (no-code gauges, bullet graphs, box "
-    "plots), but Plotly + Altair cover this dashboard's real chart types without a gap.",
+# ---- Summary: traffic lights -------------------------------------------------
+counts = {"Strong": 0, "Workable": 0, "Weak": 0}
+for it in ITEMS:
+    counts[it["verdict"]] += 1
+st.markdown(
+    f"**{counts['Strong']} 🟢 Strong · {counts['Workable']} 🟡 Workable · {counts['Weak']} 🔴 Weak** "
+    "— expand any row under Detail below for the full write-up."
 )
 
-row(
-    "2. Interactive cross-filtering (click-to-filter)",
-    "Workable",
-    "A single `Selection` object in session_state, written by whichever tile's `on_select` fired; "
-    "every other tile re-filters the shared data cube by it (excluding the source tile itself, so "
-    "the chart you clicked keeps its own context — a Tableau filter action). Highlight and "
-    "drill-through modes were prototyped and then deliberately cut: they added a second control "
-    "surface without a real payoff for the questions this project is testing, so the final build is "
-    "filter-only, matching how these dashboards actually get used.",
-    "The core mechanism has one real gotcha, not a cosmetic one: Streamlit's chart-selection state is "
-    "STICKY — it stays populated with the last click's value across every subsequent rerun, not just "
-    "the one right after the click. The first pass at this read the selection once at the top of the "
-    "script and only updated it lower down when a tile rendered, so the KPI strip and every other tile "
-    "were always filtering on the *previous* run's selection — a click looked like it did nothing. The "
-    "fix is a `consume_once()` guard (only act on a selection value the first time it's seen) paired "
-    "with an explicit `st.rerun()` so the whole script re-executes top-to-bottom with the new selection "
-    "already in state before anything else renders. This is exactly the kind of ordering trap that "
-    "doesn't exist in Tableau's declarative action model. A second, nastier gotcha surfaced only under "
-    "real browser testing (not `AppTest`, which can't simulate a chart click at all): the trend chart "
-    "used to restyle its own bars — a border on whichever product was selected — by reading `selection` "
-    "back into the SAME figure that produces it. That changes the figure's content one rerun after the "
-    "click, which makes Streamlit remount the Plotly widget, which wipes its client-side selection, "
-    "which reports back as 'cleared' and erases the selection that had just been set — a self-inflicted "
-    "feedback loop that looked exactly like 'clicking does nothing' from the outside, four reruns deep. "
-    "The fix, and the rule going forward: a chart that emits a selection must never restyle itself based "
-    "on that same selection. Separately, Plotly and Altair each return a differently-shaped selection "
-    "payload (a `points` list vs. a dict of field arrays), so the handler is duplicated per chart type "
-    "rather than being one shared function.",
-    "Tableau's dashboard actions (filter/highlight/URL/parameter) are a declarative UI over the same "
-    "idea with no code, and no equivalent of the sticky-state ordering trap above. This is more code "
-    "and more moving parts for the same outcome — but it is also more flexible per-tile (e.g. the "
-    "market-share donut deliberately opts out of cross-filtering because competitor identity isn't a "
-    "real transaction dimension, which a Tableau action can't express as cleanly).",
-)
+cols = st.columns(3)
+for i, it in enumerate(ITEMS):
+    with cols[i % 3]:
+        with st.container(border=True):
+            st.markdown(f"{VERDICT_COLOR[it['verdict']]} **{it['title']}**")
+            st.caption(it["summary"])
 
-row(
-    "3. Global filters + shareable state",
-    "Strong",
-    "Sidebar filters + the click-selection both live in `st.session_state` and are mirrored "
-    "bidirectionally to `st.query_params` (`src/state.py`), rehydrated before any filter widget "
-    "is instantiated.",
-    "A filtered, selected view is genuinely copy-paste shareable — paste the URL in a new tab and "
-    "the exact state reconstructs. The gotcha: `st.query_params` writes have to happen in a specific "
-    "order relative to widget instantiation, or you get a write-then-reread loop that silently resets "
-    "state on rerun. Once solved it's solid, but it is not documented as clearly as it should be.",
-    "Equivalent capability to a Tableau published-view URL with filter state, achieved with roughly "
-    "20 lines of code instead of zero — but with full control over exactly what's encoded.",
-)
+st.divider()
 
-row(
-    "4. Free tile placement",
-    "Weak",
-    "`st.columns` for structural rows/ratios, `st.container(border=True)` per tile, and an injected "
-    "CSS layer (`src/style.css`) that targets Streamlit's internal `data-testid` attributes for tile "
-    "chrome, sticky header, and fixed heights.",
-    "This gets close to the screenshot's grid, but it is fundamentally a stack of rows, not a true "
-    "grid — a tile cannot span two rows, and matching row heights across columns of differing content "
-    "requires manually fixing `height=` on every `st.container`, which then clips or wastes space "
-    "when content doesn't match. The CSS selectors that make tile chrome look intentional "
-    "(`div[data-testid=\"stVerticalBlockBorderWrapper\"]`) are pinned to Streamlit's internal DOM "
-    "structure, which is explicitly not a public API and has changed across versions before.",
-    "This is the single biggest gap versus Tableau, where dragging a tile to any pixel position or "
-    "spanning it across a grid is native. Streamlit's layout primitives are column-and-row only; "
-    "a real drag-and-drop canvas would require a third-party grid component (evaluated, not built, "
-    "for this prototype — see the note below).",
-)
-
-row(
-    "5. Bring your own JS chart library",
-    "Workable",
-    "A zero-build custom component (`src/components/echarts/index.html`) that loads ECharts from a "
-    "CDN and implements Streamlit's component postMessage protocol by hand — no npm, no build step, "
-    "`declare_component(path=...)` pointed straight at a static HTML file.",
-    "It works, including bidirectional click events flowing back into the same selection state as "
-    "the native charts. The cost: you're reimplementing plumbing (`streamlit:render`, "
-    "`streamlit:setComponentValue`, `streamlit:setFrameHeight`) that a proper component build (React "
-    "+ `streamlit-component-lib`) gives you for free, and the component reloads its full HTML/JS on "
-    "every Streamlit rerun rather than patching state — noticeably less smooth than the native charts "
-    "on rapid filter changes.",
-    "Tableau has no equivalent extension point at all for a dashboard author without Tableau "
-    "Extensions API + a hosted web app. Streamlit's iframe-component model is more open, just rawer.",
-)
-
-st.markdown("### Gaps beyond the 5 — from the up-front risk list")
-
-row(
-    "Rerun latency & scale (100k rows)",
-    "Workable",
-    "A cached `build_cube()` groupby (month x quarter x region x product x department x account, "
-    "~3-4k rows) computed once from the raw table; every filter/selection interaction re-filters "
-    "that small cube, not the 100k-row source. Row-level tiles (Top Customers) filter the raw frame "
-    "directly. A 1M-row variant of the generator was used once, ad hoc, to sanity-check this scales "
-    "past 100k, then dropped from the shipped app to keep the dataset fixed and single-purpose.",
-    "Cube-based filtering was sub-millisecond even at 1M rows in that ad hoc test — the architecture "
-    "choice matters more than raw row count. The row-level path (uncached, ~1-5ms at 100k, "
-    "measurably more at 1M) is where Streamlit's full-script-rerun model actually costs something: "
-    "every click reruns the whole page script, so total time is the sum of every tile's render call, "
-    "not just the one that changed. `st.fragment` scoping per-tile is the next lever, not yet applied "
-    "here uniformly.",
-    "Tableau's extract engine is purpose-built for this and doesn't rerun a whole dashboard script on "
-    "every click. At 100k rows the gap is invisible; it will show up first at higher concurrency "
-    "(multiple users) rather than higher row counts, since Streamlit reruns are single-session CPU work.",
-)
-
-row(
-    "URL state sync",
-    "Strong",
-    "See requirement #3 above — same mechanism.",
-    "No gap beyond the ordering subtlety already noted.",
-    "On par with a Tableau published view URL.",
-)
-
-row(
-    "Export: CSV / PNG / PDF",
-    "Weak",
-    "Per-tile CSV via `st.download_button`; PNG via `kaleido` (Plotly) and `vl-convert-python` "
-    "(Altair); whole-dashboard PDF via server-side re-render + `fpdf2` composition.",
-    "CSV and single-chart PNG are genuinely solid and fast. Whole-dashboard PDF is the honest failure: "
-    "it re-renders figures from scratch server-side rather than capturing the live page, so the two "
-    "ECharts tiles (client-side only) and all CSS chrome (tile shadows, chip row, fonts, sticky header) "
-    "are simply absent from the output. A faithful whole-page PDF would need a headless-browser "
-    "screenshot pipeline (e.g. Playwright) outside Streamlit's own APIs entirely.",
-    "Tableau's 'Download as PDF/PowerPoint' captures the actual rendered dashboard, including every "
-    "chart type and all formatting, in one click. This is a real, un-worked-around gap.",
-)
-
-row(
-    "Rich tables & tooltips",
-    "Strong",
-    "`st.column_config` (`ProgressColumn`, `LineChartColumn`, percent-formatted `NumberColumn`) on "
-    "Top Customers; custom `hovertemplate` on every Plotly trace; formatted Altair `tooltip` encodings.",
-    "This is close to Tableau-grade out of the box — sparkline columns and progress bars in a "
-    "dataframe took a few keyword arguments, not custom rendering code.",
-    "On par with Tableau's table formatting for this use case; Tableau still wins on ad-hoc "
-    "conditional-formatting rules a business user can set without code.",
-)
+# ---- Detail, collapsed by default --------------------------------------------
+st.markdown("### Detail")
+current_group = None
+for it in ITEMS:
+    if it["group"] != current_group:
+        current_group = it["group"]
+        st.markdown(f"**{current_group}**")
+    with st.expander(f"{VERDICT_COLOR[it['verdict']]} {it['title']}"):
+        st.markdown(f"**Workaround:** {it['workaround']}")
+        st.markdown(f"**Finding:** {it['finding']}")
+        st.markdown(f"**vs Tableau:** {it['tableau']}")
 
 st.markdown("### Other things worth knowing before committing")
-
 st.markdown(
     """
-- **No multi-user / auth / row-level security** was tested here — this prototype is single-session.
-  Streamlit Community Cloud and Snowflake-hosted Streamlit have auth primitives; a self-hosted
-  deployment does not, out of the box.
-- **No live/scheduled data refresh** — this dashboard reads static Parquet. `@st.cache_data(ttl=...)`
-  is the standard pattern for a live warehouse connection; not exercised here.
-- **Responsive/mobile behavior** was not hardened — the CSS layer assumes a desktop-width viewport,
-  consistent with how this style of dense BI grid is used in practice, but it was not tested on a
-  narrow screen.
-- **Native theming in Streamlit 1.58 is more capable than commonly assumed** — `config.toml`'s
-  `theme.chartCategoricalColors` / `chartSequentialColors` / `chartDivergingColors` and per-sidebar
-  theme overrides did real work here, reducing how much of this app depends on the injected CSS layer
-  (which is the fragile part, per requirement #4 above).
-    """
+- **No multi-user / auth / row-level security** tested — this is single-session.
+- **No live/scheduled data refresh** — reads static Parquet; `@st.cache_data(ttl=...)` is the standard pattern for a live warehouse, not exercised here.
+- **Responsive/mobile** not hardened — the CSS assumes a desktop-width dense BI grid.
+- **Streamlit 1.58's native theming is more capable than commonly assumed** — `config.toml`'s categorical/sequential/diverging chart colors and per-sidebar overrides did real work, reducing reliance on the injected CSS layer (the fragile part, per #4 above).
+"""
 )

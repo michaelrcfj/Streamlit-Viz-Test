@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <style>
-  html, body, #chart { margin: 0; padding: 0; width: 100%; height: 100%; background: transparent; }
+  html, body { margin: 0; padding: 0; background: transparent; }
+  #chart { width: 100%; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 </head>
@@ -122,7 +123,14 @@ function render(event) {
   if (!data || data.type !== "streamlit:render") return;
   const args = data.args || {};
   const el = document.getElementById("chart");
+  // Set an explicit pixel height BEFORE init/resize so echarts measures a
+  // real size on the first paint, and so the frame height we report below
+  // matches what the caller asked for (rather than an initial 0x0 that only
+  // gets fixed on the next resize event) — matches the tile grid's row height.
+  const targetHeight = args.height || 320;
+  el.style.height = targetHeight + "px";
   if (!chart) chart = echarts.init(el, null, { renderer: "svg" });
+  else chart.resize();
   const option = buildOption(args);
   chart.setOption(option, true);
   if (args.clickable) {

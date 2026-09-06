@@ -36,7 +36,7 @@ def render(filters: dict, tile_key: str):
     data = [{"name": row["competitor"], "value": round(float(row["share_pct"]), 1)} for _, row in latest.iterrows()]
     colors = [COMPETITOR_COLORS.get(d["name"], T.INK_MUTED) for d in data]
 
-    clicked = echarts_donut(data=data, colors=colors, series_name=f"Share {latest_q}", key=tile_key)
+    clicked = echarts_donut(data=data, colors=colors, series_name=f"Share {latest_q}", key=tile_key, height=T.CHART_HEIGHT)
     if clicked and clicked.get("name"):
         # Competitor identity isn't a transaction dimension — map the click
         # to a first-party "our position" annotation rather than a filter,

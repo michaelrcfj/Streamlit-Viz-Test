@@ -44,12 +44,12 @@ SERIES = {
 SERIES_ORDER = ["Software", "Services", "Hardware"]
 
 REGION_SERIES = {
-    "NA": "#2a78d6",
+    "NAM": "#2a78d6",  # not "NA" -- reads too much like "N/A" (missing data)
     "EMEA": "#eb6834",
     "APAC": "#1baf7a",
     "LATAM": "#eda100",
 }
-REGION_ORDER = ["NA", "EMEA", "APAC", "LATAM"]
+REGION_ORDER = ["NAM", "EMEA", "APAC", "LATAM"]
 
 ACCOUNT_SERIES = {
     "Revenue": "#2a78d6",
@@ -58,6 +58,15 @@ ACCOUNT_SERIES = {
     "Tax": "#e34948",
     "Net Income": "#1baf7a",
 }
+
+# ---- Shared sizing so every tile in a grid row lands at the same height ----
+# TILE_HEIGHT is the outer st.container height (see components/tile.py);
+# CHART_HEIGHT is what's left for the plot/table itself after the tile's own
+# header row and padding. Tiles with an extra control (e.g. a toggle) size
+# their chart to CHART_HEIGHT - CONTROL_ROW_HEIGHT so the total still matches.
+TILE_HEIGHT = 430
+CHART_HEIGHT = TILE_HEIGHT - 90
+CONTROL_ROW_HEIGHT = 40
 
 CASHFLOW_SERIES = {
     "Operating": "#2a78d6",

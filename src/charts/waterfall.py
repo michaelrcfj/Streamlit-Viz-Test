@@ -24,5 +24,5 @@ def render(kpi: KPIs, tile_key: str):
         hovertemplate="<b>%{x}</b><br>$%{y:,.0f}<extra></extra>",
     ))
     layout = {**T.PLOTLY_LAYOUT, "yaxis": {**T.PLOTLY_LAYOUT["yaxis"], "tickformat": "$,.0s"}}
-    fig.update_layout(**layout, height=290, showlegend=False)
+    fig.update_layout(**layout, height=T.CHART_HEIGHT, showlegend=False)
     st.plotly_chart(fig, width='stretch', key=tile_key)

@@ -41,7 +41,7 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
         hovertemplate="Budget<br>%{x}<br>$%{y:,.0f}<extra></extra>",
     ))
     layout = {**T.PLOTLY_LAYOUT, "yaxis": {**T.PLOTLY_LAYOUT["yaxis"], "tickformat": "$,.0s"}}
-    fig.update_layout(**layout, barmode="stack", height=280)
+    fig.update_layout(**layout, barmode="stack", height=T.CHART_HEIGHT)
 
     event = st.plotly_chart(fig, width='stretch', key=tile_key, on_select="rerun", selection_mode="points")
     # Map curve_number -> department (trace order == depts, budget line is last).

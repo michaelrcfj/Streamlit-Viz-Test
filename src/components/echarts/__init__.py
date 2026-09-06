@@ -30,7 +30,7 @@ def echarts_donut(data: list[dict], colors: list[str], series_name: str = "Share
                    clickable: bool = True, key: str | None = None, height: int = 260):
     """data: [{"name": str, "value": float}, ...]"""
     return _echarts_component(
-        kind="donut", data=data, colors=colors, seriesName=series_name,
+        kind="donut", data=data, colors=colors, seriesName=series_name, height=height,
         clickable=clickable, theme=_THEME_PROPS, key=key, default=None,
     )
 
@@ -39,7 +39,7 @@ def echarts_bullet(categories: list[str], actual: list[float], budget: list[floa
                     over_budget: list[bool], clickable: bool = True,
                     key: str | None = None, height: int = 260):
     return _echarts_component(
-        kind="bullet", categories=categories, actual=actual, budget=budget,
+        kind="bullet", categories=categories, actual=actual, budget=budget, height=height,
         overBudget=over_budget, clickable=clickable, theme=_THEME_PROPS, key=key, default=None,
     )
 
@@ -47,5 +47,5 @@ def echarts_bullet(categories: list[str], actual: list[float], budget: list[floa
 def echarts_gauges(gauges: list[dict], key: str | None = None, height: int = 200):
     """gauges: [{"name": str, "value": float, "color": str}, ...]"""
     return _echarts_component(
-        kind="gauge", gauges=gauges, clickable=False, theme=_THEME_PROPS, key=key, default=None,
+        kind="gauge", gauges=gauges, height=height, clickable=False, theme=_THEME_PROPS, key=key, default=None,
     )

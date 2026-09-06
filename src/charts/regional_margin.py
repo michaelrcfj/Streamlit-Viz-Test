@@ -34,7 +34,7 @@ def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
             ],
         )
         .add_params(click)
-        .properties(height=210)
+        .properties(height=T.CHART_HEIGHT)
     )
     labels = bars.mark_text(align="left", dx=4, font=T.FONT_MONO, fontSize=10, color=T.INK_SECONDARY).encode(
         text=alt.Text("gross_margin:Q", format=".1%")

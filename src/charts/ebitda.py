@@ -35,6 +35,6 @@ def render(cube_f: pd.DataFrame, tile_key: str):
             tooltip=[alt.Tooltip("quarter:N", title="Quarter"), alt.Tooltip("series:N", title="Series"),
                      alt.Tooltip("value:Q", title="Margin %", format=".1f")],
         )
-        .properties(height=230)
+        .properties(height=T.CHART_HEIGHT)
     )
     st.altair_chart(chart, width='stretch', key=tile_key)
