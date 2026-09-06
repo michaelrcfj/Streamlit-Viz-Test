@@ -23,7 +23,10 @@ def _sparkline(series: pd.Series, color: str) -> alt.Chart:
     df = series.reset_index()
     df.columns = ["month", "value"]
     return (
-        alt.Chart(df, height=36, width=110)
+        # width="container" lets the chart shrink with its column instead of
+        # keeping a fixed pixel width that overflows the tile when the window
+        # (or an open sidebar) squeezes the grid.
+        alt.Chart(df, height=36, width="container")
         .mark_line(color=color, strokeWidth=2, point=alt.OverlayMarkDef(size=18, filled=True, color=color))
         .encode(
             x=alt.X("month:N", axis=None),
@@ -34,17 +37,24 @@ def _sparkline(series: pd.Series, color: str) -> alt.Chart:
     )
 
 
+def _compact_money(value: float) -> str:
+    """Headline figures in $millions, 1 dp — keeps the number ~7 chars so it
+    never has to wrap or slide under the sparkline on a narrow tile."""
+    return f"${value / 1e6:,.1f}M"
+
+
 def kpi_tile(label: str, value: float, prior: float, sub: str, series: pd.Series, color: str,
-             fmt="${:,.0f}", higher_is_better: bool = True):
+             fmt=None, higher_is_better: bool = True):
     col1, col2 = st.columns([2, 1])
     with col1:
+        display = fmt.format(value) if fmt else _compact_money(value)
         st.markdown(f'<div class="gfc-kpi-eyebrow">{label}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="gfc-kpi-value">{fmt.format(value)}</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="gfc-kpi-value">{display}</div>', unsafe_allow_html=True)
         st.markdown(_delta_html(value, prior, " vs prior period", higher_is_better), unsafe_allow_html=True)
         st.markdown(f'<div class="gfc-kpi-sub">{sub}</div>', unsafe_allow_html=True)
     with col2:
         if len(series) >= 2:
-            st.altair_chart(_sparkline(series, color), width='content', key=f"spark_{label}")
+            st.altair_chart(_sparkline(series, color), width='stretch', key=f"spark_{label}")
 
 
 def render_kpi_strip(cube_f: pd.DataFrame, kpi: M.KPIs):
