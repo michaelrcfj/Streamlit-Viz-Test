@@ -7,12 +7,12 @@ import streamlit as st
 
 from src import theme as T
 from src.data import metrics as M
-from src.state import Selection, set_selection
+from src.state import Selection, clear_selection_if_owned_by, consume_once, set_selection_if_changed
 
 DEPT_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7", "#e34948"]
 
 
-def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, mode: str, tile_key: str):
+def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, tile_key: str):
     df = M.department_spend_vs_budget(cube_f, budget_f)
     if df.empty:
         st.info("No data in the current filter.")
@@ -25,16 +25,15 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, m
     actual_total = df.groupby("month", observed=True)["amount"].sum().reindex(months, fill_value=0)
     budget_total = df.groupby("month", observed=True)["budget_amount"].sum().reindex(months, fill_value=0)
 
+    # This figure intentionally does not vary with `selection` even for its
+    # own selected department — see trend.py for why that causes a
+    # selection-erasing feedback loop.
     for dept in depts:
         sub = df[df["department"] == dept].set_index("month").reindex(months, fill_value=0)
-        is_selected = selection.dim == "department" and dept in selection.values
-        highlighting = mode == "Highlight" and selection.active and selection.dim == "department"
-        opacity = 1.0 if (not highlighting or is_selected) else 0.25
         fig.add_trace(go.Bar(
             x=months, y=sub["amount"], name=dept,
-            marker=dict(color=dept_color[dept], opacity=opacity),
+            marker=dict(color=dept_color[dept]),
             hovertemplate=f"<b>{dept}</b><br>%{{x}}<br>$%{{y:,.0f}}<extra></extra>",
-            customdata=[dept] * len(months),
         ))
     fig.add_trace(go.Scatter(
         x=months, y=budget_total, name="Total Budget", mode="lines",
@@ -45,7 +44,13 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, m
     fig.update_layout(**layout, barmode="stack", height=280)
 
     event = st.plotly_chart(fig, width='stretch', key=tile_key, on_select="rerun", selection_mode="points")
-    if event and event.get("selection", {}).get("points"):
-        vals = {p.get("customdata") for p in event["selection"]["points"] if p.get("customdata")}
-        if vals:
-            set_selection("department", sorted(vals), tile_key)
+    # Map curve_number -> department (trace order == depts, budget line is last).
+    points = (event or {}).get("selection", {}).get("points", [])
+    values = sorted({depts[p["curve_number"]] for p in points if p.get("curve_number", -1) < len(depts)})
+
+    if values:
+        if consume_once(tile_key, ("select", tuple(values))) and set_selection_if_changed("department", values, tile_key):
+            st.rerun()
+    else:
+        if consume_once(tile_key, ("clear",)) and clear_selection_if_owned_by(tile_key):
+            st.rerun()

@@ -20,7 +20,6 @@ from typing import Optional
 import streamlit as st
 
 FILTER_DIMENSIONS = ["region", "product", "department"]
-INTERACTION_MODES = ["Filter", "Highlight", "Drill"]
 
 DEFAULTS = {
     "f_region": [],
@@ -28,7 +27,6 @@ DEFAULTS = {
     "f_department": [],
     "f_period": "All",
     "f_compare": "Target",
-    "mode": "Filter",
     "sel_dim": None,
     "sel_values": [],
     "sel_source": None,
@@ -55,7 +53,6 @@ def bootstrap():
     st.session_state["f_department"] = _decode_list(qp.get("department", ""))
     st.session_state["f_period"] = qp.get("period", DEFAULTS["f_period"])
     st.session_state["f_compare"] = qp.get("compare", DEFAULTS["f_compare"])
-    st.session_state["mode"] = qp.get("mode", DEFAULTS["mode"])
     sel_dim = qp.get("sel_dim", "")
     st.session_state["sel_dim"] = sel_dim or None
     st.session_state["sel_values"] = _decode_list(qp.get("sel_values", ""))
@@ -72,7 +69,6 @@ def sync_url():
     qp["department"] = _encode(st.session_state.get("f_department", []))
     qp["period"] = _encode(st.session_state.get("f_period", "All"))
     qp["compare"] = _encode(st.session_state.get("f_compare", "Target"))
-    qp["mode"] = _encode(st.session_state.get("mode", "Filter"))
     if st.session_state.get("sel_dim"):
         qp["sel_dim"] = st.session_state["sel_dim"]
         qp["sel_values"] = _encode(st.session_state.get("sel_values", []))
@@ -130,8 +126,48 @@ def clear_selection():
     st.session_state["sel_source"] = None
 
 
-def get_mode() -> str:
-    return st.session_state.get("mode", "Filter")
+def consume_once(tile_key: str, payload) -> bool:
+    """Returns True the first time `payload` is seen for this tile_key, False
+    on every subsequent rerun with the same payload.
+
+    Plotly/Altair/component selection state is STICKY — it persists as the
+    widget's current value across reruns until the user changes it, so a
+    chart's on_select handler runs on *every* script execution, not just the
+    one right after a click. Without this guard, reacting to that value
+    (calling st.rerun(), opening a dialog) would refire on every unrelated
+    rerun, either looping forever or re-opening a dialog the user just
+    closed. This makes reacting to a selection idempotent per distinct value.
+    """
+    marker_key = f"_consumed_{tile_key}"
+    key_repr = repr(payload)
+    if st.session_state.get(marker_key) == key_repr:
+        return False
+    st.session_state[marker_key] = key_repr
+    return True
+
+
+def set_selection_if_changed(dim: str, values: list, source: str) -> bool:
+    """Updates the selection and returns True only if it actually changed
+    vs. the current one — use this + st.rerun() so a click propagates to
+    every other tile on the SAME interaction, without looping once the
+    state has settled (see consume_once for why that matters)."""
+    values = sorted(values)
+    current = get_selection()
+    if current.dim == dim and sorted(current.values) == values and current.source == source:
+        return False
+    set_selection(dim, values, source)
+    return True
+
+
+def clear_selection_if_owned_by(source: str) -> bool:
+    """Clears the selection only if `source` is the tile that owns it, and
+    only if there is one to clear. Used when a chart's selection goes empty
+    (e.g. the user clicked the already-selected mark to deselect it)."""
+    current = get_selection()
+    if current.active and current.source == source:
+        clear_selection()
+        return True
+    return False
 
 
 def active_filter_chips() -> list[tuple[str, str]]:

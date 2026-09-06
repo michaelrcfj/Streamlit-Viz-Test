@@ -89,7 +89,9 @@ PLOTLY_LAYOUT = dict(
     paper_bgcolor=TILE_BG,
     plot_bgcolor=TILE_BG,
     font=dict(family=FONT_SANS, color=INK_SECONDARY, size=12),
-    title=dict(font=dict(family=FONT_SANS, color=INK, size=13)),
+    # No `title` here — an empty Plotly title object (font styling with no
+    # `text`) renders a bold "undefined" tspan client-side. Tile titles come
+    # from our own HTML header (src/components/tile.py) instead.
     legend=dict(font=dict(size=11, color=INK_SECONDARY), orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     margin=dict(l=8, r=8, t=8, b=8),
     xaxis=dict(gridcolor=LINE, zerolinecolor=LINE_STRONG, tickfont=dict(color=INK_MUTED, size=10)),

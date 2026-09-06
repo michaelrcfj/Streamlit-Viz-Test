@@ -1,4 +1,6 @@
-data/*.parquet
+# data/*.parquet is intentionally committed — this app is deployed on
+# Streamlit Community Cloud, which has no pre-launch step to run a
+# generator script, so the fixed dataset ships in the repo.
 __pycache__/
 *.pyc
 .venv/

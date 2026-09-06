@@ -1,5 +1,5 @@
 """Monthly revenue trend by product — stacked bar + budget line. Plotly, so
-it drives the Filter/Highlight/Drill selection loop via on_select."""
+it drives the click-to-filter selection loop via on_select."""
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -7,26 +7,28 @@ import streamlit as st
 
 from src import theme as T
 from src.data import metrics as M
-from src.state import Selection
+from src.state import Selection, clear_selection_if_owned_by, consume_once, set_selection_if_changed
 
 
-def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, mode: str, tile_key: str):
+def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, tile_key: str):
     by_product = M.monthly_revenue_by_product(cube_f)
     months = sorted(by_product["month"].unique())
     budget_monthly = budget_f[budget_f["account"] == "Revenue"].groupby("month", observed=True)["budget_amount"].sum()
 
+    # NOTE: this figure must NOT vary based on `selection` even when this
+    # tile is the one that owns it — restyling the source chart in reaction
+    # to the selection it just emitted changes the figure between reruns,
+    # which remounts the Plotly widget and wipes its client-side selection
+    # state, which then reports back as "cleared" and erases the very
+    # selection that was just set. (Found by tracing an actual click through
+    # several reruns — see the Limitations Scorecard.)
     fig = go.Figure()
     for product in T.SERIES_ORDER:
         sub = by_product[by_product["product"] == product].set_index("month").reindex(months, fill_value=0)
-        is_selected = selection.dim == "product" and product in selection.values
-        highlighting = mode == "Highlight" and selection.active
-        opacity = 1.0 if (not highlighting or is_selected or selection.dim != "product") else 0.25
         fig.add_trace(go.Bar(
             x=months, y=sub["amount"], name=product,
-            marker=dict(color=T.SERIES[product], opacity=opacity,
-                        line=dict(width=1.5 if is_selected else 0, color=T.INK)),
+            marker=dict(color=T.SERIES[product]),
             hovertemplate=f"<b>{product}</b><br>%{{x}}<br>$%{{y:,.0f}}<extra></extra>",
-            customdata=[product] * len(months),
         ))
     budget_vals = budget_monthly.reindex(months, fill_value=0)
     fig.add_trace(go.Scatter(
@@ -40,17 +42,16 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, m
     event = st.plotly_chart(
         fig, width='stretch', key=tile_key, on_select="rerun", selection_mode="points",
     )
-    _handle_selection(event, "product", tile_key)
+    # Map curve_number -> product rather than trusting customdata's exact
+    # shape (Plotly's on_select payload shape for scalar customdata isn't
+    # consistent across chart types) — the trace order is exactly
+    # T.SERIES_ORDER since that's the order they were added above.
+    points = (event or {}).get("selection", {}).get("points", [])
+    values = sorted({T.SERIES_ORDER[p["curve_number"]] for p in points if p.get("curve_number", -1) < len(T.SERIES_ORDER)})
 
-
-def _handle_selection(event, dim: str, source: str):
-    if not event or not event.get("selection"):
-        return
-    points = event["selection"].get("points", [])
-    if not points:
-        return
-    values = sorted({p.get("customdata") if p.get("customdata") is not None else p.get("legendgroup") for p in points} - {None})
-    if not values:
-        return
-    from src.state import set_selection
-    set_selection(dim, values, source)
+    if values:
+        if consume_once(tile_key, ("select", tuple(values))) and set_selection_if_changed("product", values, tile_key):
+            st.rerun()
+    else:
+        if consume_once(tile_key, ("clear",)) and clear_selection_if_owned_by(tile_key):
+            st.rerun()

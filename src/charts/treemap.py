@@ -10,7 +10,7 @@ import streamlit as st
 
 from src import theme as T
 from src.data import metrics as M
-from src.state import Selection, set_selection
+from src.state import Selection, clear_selection_if_owned_by, consume_once, set_selection_if_changed
 
 
 def _tint(hex_color: str, amount: float) -> str:
@@ -23,7 +23,7 @@ def _tint(hex_color: str, amount: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def render(cube_f: pd.DataFrame, selection: Selection, mode: str, tile_key: str):
+def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
     df = M.revenue_by_region_product(cube_f)
     if df.empty:
         st.info("No revenue in the current filter.")
@@ -55,11 +55,18 @@ def render(cube_f: pd.DataFrame, selection: Selection, mode: str, tile_key: str)
     fig.update_layout(**{k: v for k, v in T.PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")}, height=300)
 
     event = st.plotly_chart(fig, width='stretch', key=tile_key, on_select="rerun", selection_mode="points")
-    if event and event.get("selection", {}).get("points"):
-        pt = event["selection"]["points"][0]
-        clicked_id = pt.get("id") or pt.get("label")
+    points = (event or {}).get("selection", {}).get("points", [])
+    product = None
+    if points:
+        clicked_id = points[0].get("id") or points[0].get("label")
         if clicked_id and "/" in str(clicked_id):
             product = clicked_id.split("/")[0]
-            set_selection("product", [product], tile_key)
         elif clicked_id in T.SERIES_ORDER:
-            set_selection("product", [clicked_id], tile_key)
+            product = clicked_id
+
+    if product:
+        if consume_once(tile_key, ("select", product)) and set_selection_if_changed("product", [product], tile_key):
+            st.rerun()
+    else:
+        if consume_once(tile_key, ("clear",)) and clear_selection_if_owned_by(tile_key):
+            st.rerun()

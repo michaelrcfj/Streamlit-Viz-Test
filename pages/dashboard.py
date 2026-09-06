@@ -1,4 +1,8 @@
-"""The Global FinCorp dashboard grid."""
+"""The Global FinCorp dashboard grid.
+
+Layout: a fixed 4-column grid. A row of 4 tiles splits evenly; a shorter
+final row still fills the full width by giving its tiles wider ratios so
+the total always sums to 4 "slots" (e.g. 2 tiles -> 2 slots each)."""
 
 import time
 
@@ -18,39 +22,21 @@ S.bootstrap()
 if not data_ready():
     st.error(
         "No data found. Run `python scripts/generate_data.py` from the project "
-        "root to generate the ~100k-row synthetic dataset, then reload."
+        "root to generate the dataset, then reload."
     )
     st.stop()
+
+tx_full = load_transactions()
 
 # ---- Sidebar: global filters -------------------------------------------------
 with st.sidebar:
     st.markdown("### Filters")
     st.caption("Applied to every tile on the dashboard.")
 
-    stress_mode = st.toggle(
-        "Stress test: 1M rows", value=st.session_state.get("stress_mode", False),
-        key="stress_mode", help="Swap the data source to a 1M-row table to see where the rerun model actually breaks. "
-                                  "Run `python scripts/generate_data.py --stress` once first.",
-    )
-    if stress_mode and not data_ready(stress=True):
-        st.warning("Stress dataset not found — run `python scripts/generate_data.py --stress` first. Falling back to 100k rows.")
-        stress_mode = False
-
-    tx_full = load_transactions(stress=stress_mode)
-
     all_regions = list(T.REGION_ORDER)
     all_products = list(T.SERIES_ORDER)
     all_depts = sorted(tx_full["department"].cat.categories.tolist())
     all_periods = ["All"] + sorted(tx_full["quarter"].unique().tolist())
-
-    # Guard against a persisted session_state value that no longer exists in
-    # the current option set (e.g. after toggling the stress dataset) —
-    # Streamlit's key-bound widgets raise if the bound value isn't in options.
-    st.session_state["f_region"] = [r for r in st.session_state.get("f_region", []) if r in all_regions]
-    st.session_state["f_product"] = [p for p in st.session_state.get("f_product", []) if p in all_products]
-    st.session_state["f_department"] = [d for d in st.session_state.get("f_department", []) if d in all_depts]
-    if st.session_state.get("f_period") not in all_periods:
-        st.session_state["f_period"] = "All"
 
     st.multiselect("Region", all_regions, key="f_region")
     st.multiselect("Product", all_products, key="f_product")
@@ -66,28 +52,19 @@ with st.sidebar:
         S.clear_selection()
         st.rerun()
 
-# ---- Header: title + interaction mode toggle --------------------------------
+# ---- Header ------------------------------------------------------------------
 st.markdown('<div class="gfc-header">', unsafe_allow_html=True)
-h1, h2 = st.columns([3, 2])
+h1, h2 = st.columns([4, 1])
 with h1:
     st.markdown("## 📊 Global FinCorp — Financial Performance Dashboard")
     st.caption("Q1–Q3 2023 · Jan 1 – Sep 30 · synthetic data")
 with h2:
-    m1, m2 = st.columns([3, 1])
-    with m1:
-        st.segmented_control(
-            "Interaction mode", S.INTERACTION_MODES, key="mode",
-            help=(
-                "**Filter** — a click re-filters every other tile (like a Tableau filter action). "
-                "**Highlight** — totals stay fixed; other tiles dim non-matching marks. "
-                "**Drill** — a click opens a transaction-level detail view."
-            ),
-        )
-    with m2:
-        st.write("")
-        if st.button("✕ Reset", width='stretch', disabled=not S.get_selection().active):
-            S.clear_selection()
-            st.rerun()
+    st.write("")
+    if st.button("✕ Reset selection", width='stretch', disabled=not S.get_selection().active,
+                 help="Click a chart to filter every other tile by it (like a Tableau filter action). "
+                      "This clears that selection without touching the sidebar filters."):
+        S.clear_selection()
+        st.rerun()
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ---- Active filter chips ------------------------------------------------------
@@ -101,7 +78,6 @@ if chips:
 
 filters = S.get_filters()
 selection = S.get_selection()
-mode = S.get_mode()
 
 # ---- Core aggregation (this is what the perf footer measures) --------------
 perf = {}
@@ -124,86 +100,67 @@ if cube_f.empty:
     st.warning("No data matches the current filters + selection. Try clearing a filter.")
     st.stop()
 
-# ---- KPI strip ----------------------------------------------------------------
+
+def cube_for(tile_key: str):
+    return M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile=tile_key)
+
+
+def budget_for():
+    return M.filter_budget(budget_full, filters)
+
+
+# ---- KPI strip (4 tiles — already a full row) --------------------------------
 kpi_chart.render_kpi_strip(cube_f, kpis)
 
-# ---- Row 1: trend | regional margin | expense vs budget ----------------------
-r1c1, r1c2, r1c3 = st.columns([2, 1, 1])
-with r1c1:
-    with tile("Monthly Revenue Trend (Combo Chart)", "📈"):
-        cube_local = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile="trend_chart")
-        budget_local = M.filter_budget(budget_full, filters)
-        trend.render(cube_local, budget_local, selection, mode, tile_key="trend_chart")
-with r1c2:
-    with tile("Regional Gross Margin", "🌍"):
-        cube_local = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile="regional_margin")
-        regional_margin.render(cube_local, selection, mode, tile_key="regional_margin")
-with r1c3:
-    with tile("Expense Breakdown vs Budget", "💰"):
-        cube_local = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile="expense_bullet")
-        budget_local = M.filter_budget(budget_full, filters)
-        expense_bullet.render(cube_local, budget_local, selection, tile_key="expense_bullet")
+# ---- 4-column tile grid -------------------------------------------------------
+GRID_RATIOS = {1: [4], 2: [2, 2], 3: [2, 1, 1], 4: [1, 1, 1, 1]}
 
-# ---- Row 2: treemap | waterfall | dept spend ---------------------------------
-r2c1, r2c2, r2c3 = st.columns([1, 1, 1])
-with r2c1:
+
+def grid_row(n: int):
+    return st.columns(GRID_RATIOS[n])
+
+
+# Row 1 (4 tiles)
+c1, c2, c3, c4 = grid_row(4)
+with c1:
+    with tile("Monthly Revenue Trend (Combo Chart)", "📈"):
+        trend.render(cube_for("trend_chart"), budget_for(), selection, tile_key="trend_chart")
+with c2:
+    with tile("Regional Gross Margin", "🌍"):
+        regional_margin.render(cube_for("regional_margin"), selection, tile_key="regional_margin")
+with c3:
+    with tile("Expense Breakdown vs Budget", "💰"):
+        expense_bullet.render(cube_for("expense_bullet"), budget_for(), selection, tile_key="expense_bullet")
+with c4:
     with tile("Revenue by Region & Product", "🌳"):
-        cube_local = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile="treemap")
-        treemap.render(cube_local, selection, mode, tile_key="treemap")
-with r2c2:
+        treemap.render(cube_for("treemap"), selection, tile_key="treemap")
+
+# Row 2 (4 tiles)
+c1, c2, c3, c4 = grid_row(4)
+with c1:
     with tile("Profitability Waterfall", "💧"):
         waterfall.render(kpis, tile_key="waterfall")
-with r2c3:
+with c2:
     with tile("Dept Spend vs Budget", "🏢"):
-        cube_local = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile="dept_spend")
-        budget_local = M.filter_budget(budget_full, filters)
-        dept_spend.render(cube_local, budget_local, selection, mode, tile_key="dept_spend")
-
-# ---- Row 3: top customers | cash flow | market share | ebitda ----------------
-r3c1, r3c2, r3c3, r3c4 = st.columns([1.3, 1, 1, 1])
-with r3c1:
+        dept_spend.render(cube_for("dept_spend"), budget_for(), selection, tile_key="dept_spend")
+with c3:
     with tile("Top Customers by Revenue", "🏆"):
         t0 = time.perf_counter()
         tx_f = M.filter_raw(tx_full, filters, selection.dim, selection.values, selection.source, current_tile=None)
         perf["raw_filter_ms"] = (time.perf_counter() - t0) * 1000
         top_customers.render(tx_f, tile_key="top_customers")
-with r3c2:
+with c4:
     with tile("Cash Flow Trends", "💵"):
         cashflow.render(cashflow_df, tile_key="cashflow")
-with r3c3:
+
+# Row 3 (2 tiles — each takes the width of two grid slots)
+c1, c2 = grid_row(2)
+with c1:
     with tile("Market Share Analysis", "🥧"):
         market_share.render(filters, tile_key="market_share")
-with r3c4:
+with c2:
     with tile("Quarterly EBITDA Margin", "📐"):
-        cube_local = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile="ebitda")
-        ebitda.render(cube_local, tile_key="ebitda")
-
-# ---- Drill-through dialog -----------------------------------------------------
-if st.session_state.get("drill_open") and st.session_state.get("drill_customer"):
-    @st.dialog(f"Drill through — {st.session_state['drill_customer']}", width="large")
-    def _drill():
-        customer = st.session_state["drill_customer"]
-        rows = tx_full[tx_full["customer"] == customer].sort_values("date", ascending=False)
-        c1, c2, c3 = st.columns(3)
-        rev_rows = rows[rows["account"] == "Revenue"]
-        c1.metric("Total Revenue", f"${rev_rows['amount'].sum():,.0f}")
-        c2.metric("Transactions", f"{len(rows):,}")
-        c3.metric("Regions", rows["region"].nunique())
-        st.dataframe(
-            rows[["date", "region", "product", "department", "account", "amount"]].head(200),
-            width='stretch', hide_index=True,
-            column_config={"amount": st.column_config.NumberColumn("Amount", format="$%,.2f")},
-        )
-        st.download_button(
-            "Download full transaction history (CSV)",
-            data=rows.to_csv(index=False).encode("utf-8"),
-            file_name=f"{customer.replace(' ', '_')}_transactions.csv",
-            mime="text/csv",
-        )
-        if st.button("Close"):
-            st.session_state["drill_open"] = False
-            st.rerun()
-    _drill()
+        ebitda.render(cube_for("ebitda"), tile_key="ebitda")
 
 # ---- Perf footer + export ------------------------------------------------------
 with st.expander("⏱ Performance & Export", expanded=False):
@@ -216,8 +173,8 @@ with st.expander("⏱ Performance & Export", expanded=False):
     st.caption(
         "Cube build is cached on the raw table (cache hit after first load, regardless of filter). "
         "Filter+aggregate re-derives KPIs from the ~3-4k row cube on every interaction — this is the "
-        "number to watch as you toggle filters. Raw-row filter is the uncached path (Top Customers, "
-        "drill-through) — this is where row count actually matters; try the 1M stress toggle."
+        "number to watch as you toggle filters. Raw-row filter is the uncached path (Top Customers) — "
+        "this is the one place row count actually costs something."
     )
 
     from src import export as E

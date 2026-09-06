@@ -11,12 +11,11 @@ Performance design (this is what the perf footer on the dashboard measures):
     on the 100k-row source — boolean-masking + re-summing a few thousand
     rows is sub-millisecond, so it is deliberately left UNCACHED (caching
     overhead would exceed the work itself).
-  - The exceptions are Top Customers and the drill-through detail view,
-    which need row-level (customer, transaction) grain the cube doesn't
-    carry. Those filter the raw 100k-row frame directly on every call —
-    still ~1-5ms via vectorized boolean indexing, but the one place scale
-    genuinely costs something, which is exactly why the perf footer times
-    it separately.
+  - The exception is Top Customers, which needs row-level (customer)
+    grain the cube doesn't carry. It filters the raw 100k-row frame
+    directly on every call — still ~1-5ms via vectorized boolean
+    indexing, but the one place scale genuinely costs something, which is
+    exactly why the perf footer times it separately.
 
 All headline KPIs are derived from these rows — never hardcoded — so the KPI
 strip, the waterfall, and the monthly trend always reconcile under any filter
@@ -36,7 +35,8 @@ CUBE_DIMS = ["month", "quarter", "region", "product", "department", "account"]
 @st.cache_data(show_spinner=False)
 def build_cube(tx: pd.DataFrame) -> pd.DataFrame:
     """The one expensive full-table groupby. Cached on the raw frame, which
-    is stable across the session, so this runs once per (stress-toggle) mode."""
+    is stable across the session, so this runs once and is a cache hit
+    on every subsequent interaction regardless of filters."""
     return tx.groupby(CUBE_DIMS, observed=True)["amount"].sum().reset_index()
 
 
@@ -62,7 +62,7 @@ def filter_raw(tx: pd.DataFrame, filters: dict, selection_dim: str | None = None
                selection_values: list | None = None, selection_source: str | None = None,
                current_tile: str | None = None) -> pd.DataFrame:
     """Row-level filter for tiles that need grain the cube doesn't carry
-    (Top Customers, drill-through). Uncached vectorized boolean mask."""
+    (Top Customers). Uncached vectorized boolean mask."""
     mask = pd.Series(True, index=tx.index)
     for dim in ("region", "product", "department"):
         values = filters.get(dim) or []

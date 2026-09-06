@@ -8,7 +8,7 @@ import streamlit as st
 
 from src.components.echarts import echarts_bullet, echarts_gauges
 from src.data import metrics as M
-from src.state import Selection, set_selection
+from src.state import Selection, consume_once, set_selection_if_changed
 
 
 def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, tile_key: str):
@@ -39,4 +39,6 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
         key=tile_key,
     )
     if clicked and clicked.get("name"):
-        set_selection("department", [clicked["name"]], tile_key)
+        dept = clicked["name"]
+        if consume_once(tile_key, ("select", dept)) and set_selection_if_changed("department", [dept], tile_key):
+            st.rerun()

@@ -43,21 +43,38 @@ row(
 )
 
 row(
-    "2. Interactive cross-filtering (filter / highlight / drill)",
+    "2. Interactive cross-filtering (click-to-filter)",
     "Workable",
-    "A single `Selection` object in session_state, written by whichever tile's `on_select` fired, "
-    "consumed differently per mode: Filter re-filters the shared data cube (excluding the source "
-    "tile), Highlight leaves data intact and drops trace/mark opacity, Drill opens an `st.dialog` "
-    "scoped to the clicked entity.",
-    "All three modes work and are genuinely useful. The rough edges: Plotly and Altair each have "
-    "their own selection-event shape (`points` list vs a dict of field arrays), so the selection "
-    "handler is duplicated per chart type rather than one shared function. There's also no equivalent "
-    "of Tableau's automatic 'this action only affects these sheets' scoping — it's hand-wired per tile "
-    "via the `current_tile` exclusion parameter threaded through every render call.",
+    "A single `Selection` object in session_state, written by whichever tile's `on_select` fired; "
+    "every other tile re-filters the shared data cube by it (excluding the source tile itself, so "
+    "the chart you clicked keeps its own context — a Tableau filter action). Highlight and "
+    "drill-through modes were prototyped and then deliberately cut: they added a second control "
+    "surface without a real payoff for the questions this project is testing, so the final build is "
+    "filter-only, matching how these dashboards actually get used.",
+    "The core mechanism has one real gotcha, not a cosmetic one: Streamlit's chart-selection state is "
+    "STICKY — it stays populated with the last click's value across every subsequent rerun, not just "
+    "the one right after the click. The first pass at this read the selection once at the top of the "
+    "script and only updated it lower down when a tile rendered, so the KPI strip and every other tile "
+    "were always filtering on the *previous* run's selection — a click looked like it did nothing. The "
+    "fix is a `consume_once()` guard (only act on a selection value the first time it's seen) paired "
+    "with an explicit `st.rerun()` so the whole script re-executes top-to-bottom with the new selection "
+    "already in state before anything else renders. This is exactly the kind of ordering trap that "
+    "doesn't exist in Tableau's declarative action model. A second, nastier gotcha surfaced only under "
+    "real browser testing (not `AppTest`, which can't simulate a chart click at all): the trend chart "
+    "used to restyle its own bars — a border on whichever product was selected — by reading `selection` "
+    "back into the SAME figure that produces it. That changes the figure's content one rerun after the "
+    "click, which makes Streamlit remount the Plotly widget, which wipes its client-side selection, "
+    "which reports back as 'cleared' and erases the selection that had just been set — a self-inflicted "
+    "feedback loop that looked exactly like 'clicking does nothing' from the outside, four reruns deep. "
+    "The fix, and the rule going forward: a chart that emits a selection must never restyle itself based "
+    "on that same selection. Separately, Plotly and Altair each return a differently-shaped selection "
+    "payload (a `points` list vs. a dict of field arrays), so the handler is duplicated per chart type "
+    "rather than being one shared function.",
     "Tableau's dashboard actions (filter/highlight/URL/parameter) are a declarative UI over the same "
-    "idea with no code. This is more code and more moving parts for the same outcome — but it is also "
-    "far more flexible per-tile (e.g. the market-share donut deliberately opts out of cross-filtering "
-    "because competitor identity isn't a real dimension, which a Tableau action can't express as cleanly).",
+    "idea with no code, and no equivalent of the sticky-state ordering trap above. This is more code "
+    "and more moving parts for the same outcome — but it is also more flexible per-tile (e.g. the "
+    "market-share donut deliberately opts out of cross-filtering because competitor identity isn't a "
+    "real transaction dimension, which a Tableau action can't express as cleanly).",
 )
 
 row(
@@ -115,9 +132,10 @@ row(
     "Workable",
     "A cached `build_cube()` groupby (month x quarter x region x product x department x account, "
     "~3-4k rows) computed once from the raw table; every filter/selection interaction re-filters "
-    "that small cube, not the 100k-row source. Row-level tiles (Top Customers, drill-through) filter "
-    "the raw frame directly.",
-    "Cube-based filtering is sub-millisecond even under the 1M-row stress toggle — the architecture "
+    "that small cube, not the 100k-row source. Row-level tiles (Top Customers) filter the raw frame "
+    "directly. A 1M-row variant of the generator was used once, ad hoc, to sanity-check this scales "
+    "past 100k, then dropped from the shipped app to keep the dataset fixed and single-purpose.",
+    "Cube-based filtering was sub-millisecond even at 1M rows in that ad hoc test — the architecture "
     "choice matters more than raw row count. The row-level path (uncached, ~1-5ms at 100k, "
     "measurably more at 1M) is where Streamlit's full-script-rerun model actually costs something: "
     "every click reruns the whole page script, so total time is the sum of every tile's render call, "

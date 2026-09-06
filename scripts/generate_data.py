@@ -1,20 +1,22 @@
 """
-Generates synthetic Parquet data for the Global FinCorp dashboard.
+Generates the fixed synthetic Parquet dataset for the Global FinCorp
+dashboard. Run once; the output under data/ is committed to the repo so the
+app (including on Streamlit Community Cloud, which has no pre-launch script
+step) just reads it off disk rather than regenerating it per run.
 
 Design goals:
-  - ~100k transaction rows (or ~1M with --stress) with real seasonality,
-    growth trend, and region/product skew so cross-filtering visibly moves
-    every tile.
+  - ~100k transaction rows with real seasonality, growth trend, and
+    region/product skew so cross-filtering visibly moves every tile.
   - All headline KPIs (revenue, gross profit, opex, net income, EBITDA) are
     DERIVED from these rows downstream (see src/data/metrics.py) — never
     hardcoded — so the KPI strip reconciles with the waterfall by
     construction, unlike the source screenshot.
-  - Deterministic: numpy.random.default_rng(42).
+  - Deterministic: numpy.random.default_rng(42), so re-running this script
+    reproduces byte-identical data.
 
-Run:  python scripts/generate_data.py [--stress]
+Run:  python scripts/generate_data.py
 """
 
-import argparse
 import sys
 from pathlib import Path
 
@@ -192,11 +194,7 @@ def assert_invariants(tx: pd.DataFrame):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--stress", action="store_true", help="generate ~1M rows instead of ~100k")
-    args = parser.parse_args()
-
-    n_rows = 1_000_000 if args.stress else 100_000
+    n_rows = 100_000
     rng = np.random.default_rng(42)
 
     DATA_DIR.mkdir(exist_ok=True)
@@ -204,24 +202,19 @@ def main():
     print(f"Generating {n_rows:,} transaction rows...")
     tx = generate_transactions(rng, n_rows)
     assert_invariants(tx)
+    tx.to_parquet(DATA_DIR / "transactions.parquet", index=False)
 
-    suffix = "_stress" if args.stress else ""
-    tx.to_parquet(DATA_DIR / f"transactions{suffix}.parquet", index=False)
+    budget = generate_budget(rng, tx)
+    budget.to_parquet(DATA_DIR / "budget.parquet", index=False)
 
-    if not args.stress:
-        budget = generate_budget(rng, tx)
-        budget.to_parquet(DATA_DIR / "budget.parquet", index=False)
+    market_share = generate_market_share(rng)
+    market_share.to_parquet(DATA_DIR / "market_share.parquet", index=False)
 
-        market_share = generate_market_share(rng)
-        market_share.to_parquet(DATA_DIR / "market_share.parquet", index=False)
+    cashflow = generate_cashflow(rng, tx)
+    cashflow.to_parquet(DATA_DIR / "cashflow.parquet", index=False)
 
-        cashflow = generate_cashflow(rng, tx)
-        cashflow.to_parquet(DATA_DIR / "cashflow.parquet", index=False)
-
-        print(f"Wrote transactions.parquet ({len(tx):,} rows), budget.parquet ({len(budget):,} rows), "
-              f"market_share.parquet ({len(market_share)} rows), cashflow.parquet ({len(cashflow)} rows)")
-    else:
-        print(f"Wrote transactions_stress.parquet ({len(tx):,} rows)")
+    print(f"Wrote transactions.parquet ({len(tx):,} rows), budget.parquet ({len(budget):,} rows), "
+          f"market_share.parquet ({len(market_share)} rows), cashflow.parquet ({len(cashflow)} rows)")
 
 
 if __name__ == "__main__":
