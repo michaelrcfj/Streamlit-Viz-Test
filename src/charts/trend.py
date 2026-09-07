@@ -24,9 +24,13 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
     # several reruns — see the Limitations Scorecard.)
     fig = go.Figure()
     for product in T.SERIES_ORDER:
-        sub = by_product[by_product["product"] == product].set_index("month").reindex(months, fill_value=0)
+        # Reindex just the amount Series, not the whole (possibly empty, if
+        # this product got filtered out of cube_f) frame -- reindexing the
+        # frame itself would need a fill value for the "product" column too,
+        # and 0 isn't a valid category on that Categorical dtype.
+        sub = by_product[by_product["product"] == product].set_index("month")["amount"].reindex(months, fill_value=0)
         fig.add_trace(go.Bar(
-            x=months, y=sub["amount"], name=product,
+            x=months, y=sub, name=product,
             marker=dict(color=T.SERIES[product]),
             hovertemplate=f"<b>{product}</b><br>%{{x}}<br>$%{{y:,.0f}}<extra></extra>",
         ))
