@@ -29,9 +29,13 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
     # own selected department — see trend.py for why that causes a
     # selection-erasing feedback loop.
     for dept in depts:
-        sub = df[df["department"] == dept].set_index("month").reindex(months, fill_value=0)
+        # Reindex just the amount Series, not the whole frame -- reindexing
+        # the frame would need a fill value for the "department" column too,
+        # and 0 isn't a valid category on that Categorical dtype (see the
+        # identical fix in trend.py, which is where this actually crashes).
+        sub = df[df["department"] == dept].set_index("month")["amount"].reindex(months, fill_value=0)
         fig.add_trace(go.Bar(
-            x=months, y=sub["amount"], name=dept,
+            x=months, y=sub, name=dept,
             marker=dict(color=dept_color[dept]),
             hovertemplate=f"<b>{dept}</b><br>%{{x}}<br>$%{{y:,.0f}}<extra></extra>",
         ))

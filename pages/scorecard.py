@@ -49,10 +49,10 @@ ITEMS = [
     ),
     dict(
         group="Gaps beyond the 5", title="Rerun latency & scale (100k rows)", verdict="Workable",
-        summary="A small pre-aggregated cube keeps filtering sub-millisecond even at 1M rows; full-script reruns are the real cost.",
-        workaround="A cached `build_cube()` groupby (~3-4k rows) computed once; every interaction re-filters that small cube, not the 100k-row source.",
-        finding="Cube filtering was sub-ms even in a 1M-row ad hoc test. The real cost is that every click reruns the *whole* page script — total time is the sum of every tile's render, not just the one that changed.",
-        tableau="Tableau's extract engine doesn't rerun a whole dashboard per click; the gap shows up first under concurrency, not row count.",
+        summary="A small pre-aggregated cube keeps filtering sub-millisecond even at 1M rows; each interactive tile is now an `@st.fragment`, so a click reruns just that tile, not the whole page.",
+        workaround="A cached `build_cube()` groupby (~3-4k rows) computed once; every interaction re-filters that small cube. Every tile with its own widget (the 5 click-to-filter charts, the gauge toggle, Performance & Export) is wrapped in `@st.fragment` (Streamlit ≥1.37).",
+        finding="Cube filtering was sub-ms even in a 1M-row ad hoc test — the real cost was always that every click reran the *whole* page script. Click-to-filter is the interesting case: the chart's own click is a fragment-scoped rerun (cheap, skips the cube rebuild and all 9 other tiles), and only the follow-up `st.rerun()` that actually propagates the new selection triggers a full app rerun — because a bare `st.rerun()` called from inside a fragment is documented to escalate to app scope. That collapses what used to be two full-script reruns per click into one fragment rerun plus one necessary full rerun. Toggling the bullet/gauge variant or opening Performance & Export no longer reruns the other 9 tiles at all.",
+        tableau="Tableau's extract engine doesn't rerun a whole dashboard per click; fragments close most of that gap for same-tile interactions, but cross-filtering a sibling tile is still a full rerun here versus Tableau's targeted dashboard action.",
     ),
     dict(
         group="Gaps beyond the 5", title="URL state sync", verdict="Strong",
@@ -113,6 +113,7 @@ st.markdown(
 - **No multi-user / auth / row-level security** tested — this is single-session.
 - **No live/scheduled data refresh** — reads static Parquet; `@st.cache_data(ttl=...)` is the standard pattern for a live warehouse, not exercised here.
 - **Responsive/mobile** not hardened — the CSS assumes a desktop-width dense BI grid.
-- **Streamlit 1.58's native theming is more capable than commonly assumed** — `config.toml`'s categorical/sequential/diverging chart colors and per-sidebar overrides did real work, reducing reliance on the injected CSS layer (the fragile part, per #4 above).
+- **Streamlit's native theming is more capable than commonly assumed** — `config.toml`'s categorical/sequential/diverging chart colors and per-sidebar overrides did real work, reducing reliance on the injected CSS layer (the fragile part, per #4 above).
+- **Running Streamlit 1.63.** Upgraded from 1.58 specifically for `@st.fragment`'s app-vs-fragment `st.rerun()` scoping (see "Rerun latency & scale" above) — no other behavior change was needed to adopt it.
 """
 )
