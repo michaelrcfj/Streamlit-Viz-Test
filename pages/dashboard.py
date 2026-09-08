@@ -2,7 +2,30 @@
 
 Layout: a fixed 4-column grid. A row of 4 tiles splits evenly; a shorter
 final row still fills the full width by giving its tiles wider ratios so
-the total always sums to 4 "slots" (e.g. 2 tiles -> 2 slots each)."""
+the total always sums to 4 "slots" (e.g. 2 tiles -> 2 slots each).
+
+Every tile below is its own @st.fragment, keyed and listed in
+S.DEPENDENT_FRAGMENTS. A click-to-filter chart, a sidebar filter, or one of
+the two clear/reset buttons all end up calling one of the S.apply_*
+callbacks, which commits the change and calls
+`st.rerun(scope=S.DEPENDENT_FRAGMENTS)` -- a TARGETED rerun of exactly the
+tiles whose content depends on filters/selection, not a full-page one.
+Nothing outside that list (the sidebar widgets themselves, the static Cash
+Flow tile) is ever torn down, so there's no "whole dashboard blanks out for
+a second" flash: only the fragments that actually need new data disappear
+and reappear, and only while their own new content is on the way.
+
+Because a targeted rerun re-invokes each fragment's stored closure directly
+without re-running the rest of this script, every fragment below reads
+filters/selection fresh from session_state (via cube_for/budget_for or
+S.get_filters()/S.get_selection() directly) rather than closing over the
+`filters`/`selection` this script computed on its last full run -- that
+closure would otherwise go stale the moment a targeted rerun (rather than a
+full one) is what updated the underlying state. cube_full/budget_full/
+tx_full/cashflow_df are the exception: they're `@st.cache_data`-backed and
+never change for the session, so a stale reference to them is byte-for-byte
+identical to a fresh one and closing over them is fine.
+"""
 
 import time
 
@@ -27,9 +50,30 @@ if not data_ready():
     st.stop()
 
 tx_full = load_transactions()
+cube_full = M.build_cube(tx_full)
+budget_full = load_budget()
+cashflow_df = load_cashflow()
+
+
+def cube_for(tile_key: str | None):
+    filters = S.get_filters()
+    selection = S.get_selection()
+    return M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile=tile_key)
+
+
+def budget_for():
+    return M.filter_budget(budget_full, S.get_filters())
+
 
 # ---- Sidebar: global filters -------------------------------------------------
-with st.sidebar:
+# A fragment like every other filter/selection-dependent piece of UI: a
+# filter widget's own value change already updates its own display
+# optimistically client-side, but "Clear all filters" changes these same
+# widgets' values from a DIFFERENT callback -- without this in
+# S.DEPENDENT_FRAGMENTS, that change would commit server-side (as the URL
+# sync would show) while the widgets kept displaying their old values.
+@st.fragment(key="sidebar_filters")
+def sidebar_filters():
     st.markdown("### Filters")
     st.caption("Applied to every tile on the dashboard.")
 
@@ -38,92 +82,62 @@ with st.sidebar:
     all_depts = sorted(tx_full["department"].cat.categories.tolist())
     all_periods = ["All"] + sorted(tx_full["quarter"].unique().tolist())
 
-    st.multiselect("Region", all_regions, key="f_region")
-    st.multiselect("Product", all_products, key="f_product")
-    st.multiselect("Department", all_depts, key="f_department")
-    st.selectbox("Fiscal Period", all_periods, key="f_period")
-    st.radio("Compare To", ["Target", "Previous Year"], key="f_compare", horizontal=True)
+    st.multiselect("Region", all_regions, key="f_region", on_change=S.apply_filters_changed)
+    st.multiselect("Product", all_products, key="f_product", on_change=S.apply_filters_changed)
+    st.multiselect("Department", all_depts, key="f_department", on_change=S.apply_filters_changed)
+    st.selectbox("Fiscal Period", all_periods, key="f_period", on_change=S.apply_filters_changed)
+    st.radio("Compare To", ["Target", "Previous Year"], key="f_compare", horizontal=True,
+             on_change=S.apply_filters_changed)
 
     st.divider()
-    if st.button("Clear all filters", width='stretch'):
-        for dim in ("f_region", "f_product", "f_department"):
-            st.session_state[dim] = []
-        st.session_state["f_period"] = "All"
-        S.clear_selection()
-        st.rerun()
-
-# ---- Header ------------------------------------------------------------------
-st.markdown('<div class="gfc-header">', unsafe_allow_html=True)
-h1, h2 = st.columns([4, 1])
-with h1:
-    st.markdown("## 📊 Global FinCorp — Financial Performance Dashboard")
-    st.caption("Q1–Q3 2023 · Jan 1 – Sep 30 · synthetic data")
-with h2:
-    st.write("")
-    if st.button("✕ Reset selection", width='stretch', disabled=not S.get_selection().active,
-                 help="Click a chart to filter every other tile by it (like a Tableau filter action). "
-                      "This clears that selection without touching the sidebar filters."):
-        S.clear_selection()
-        st.rerun()
-st.markdown("</div>", unsafe_allow_html=True)
-
-# ---- Active filter chips ------------------------------------------------------
-chips = S.active_filter_chips()
-if chips:
-    chip_html = "".join(
-        f'<span class="gfc-chip{" selection" if kind == "selection" else ""}">{label}</span>'
-        for label, kind in chips
-    )
-    st.markdown(f'<div class="gfc-chip-row">{chip_html}</div>', unsafe_allow_html=True)
-
-filters = S.get_filters()
-selection = S.get_selection()
-
-# ---- Core aggregation (this is what the perf footer measures) --------------
-perf = {}
-t0 = time.perf_counter()
-cube_full = M.build_cube(tx_full)
-perf["cube_build_ms"] = (time.perf_counter() - t0) * 1000
-
-budget_full = load_budget()
-cashflow_df = load_cashflow()
-
-t0 = time.perf_counter()
-cube_f = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile=None)
-budget_f = M.filter_budget(budget_full, filters)
-kpis = M.compute_kpis(cube_f)
-perf["filter_agg_ms"] = (time.perf_counter() - t0) * 1000
-perf["cube_rows"] = len(cube_f)
-perf["raw_rows"] = len(tx_full)
-
-if cube_f.empty:
-    st.warning("No data matches the current filters + selection. Try clearing a filter.")
-    st.stop()
+    st.button("Clear all filters", width='stretch', on_click=S.apply_clear_all_filters)
 
 
-def cube_for(tile_key: str):
-    return M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile=tile_key)
+with st.sidebar:
+    sidebar_filters()
 
 
-def budget_for():
-    return M.filter_budget(budget_full, filters)
+# ---- Header + active filter chips --------------------------------------------
+@st.fragment(key="chips")
+def header_and_chips():
+    st.markdown('<div class="gfc-header">', unsafe_allow_html=True)
+    h1, h2 = st.columns([4, 1])
+    with h1:
+        st.markdown("## 📊 Global FinCorp — Financial Performance Dashboard")
+        st.caption("Q1–Q3 2023 · Jan 1 – Sep 30 · synthetic data")
+    with h2:
+        st.write("")
+        st.button("✕ Reset selection", width='stretch', disabled=not S.get_selection().active,
+                   help="Click a chart to filter every other tile by it (like a Tableau filter action). "
+                        "This clears that selection without touching the sidebar filters.",
+                   on_click=S.apply_reset_selection)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    chips = S.active_filter_chips()
+    if chips:
+        chip_html = "".join(
+            f'<span class="gfc-chip{" selection" if kind == "selection" else ""}">{label}</span>'
+            for label, kind in chips
+        )
+        st.markdown(f'<div class="gfc-chip-row">{chip_html}</div>', unsafe_allow_html=True)
+
+
+header_and_chips()
 
 
 # ---- KPI strip (4 tiles — already a full row) --------------------------------
-kpi_chart.render_kpi_strip(cube_f, kpis)
+@st.fragment(key="kpi_strip")
+def kpi_strip():
+    cube_f = cube_for(None)
+    if cube_f.empty:
+        st.warning("No data matches the current filters + selection. Try clearing a filter.")
+        return
+    kpi_chart.render_kpi_strip(cube_f, M.compute_kpis(cube_f))
+
+
+kpi_strip()
 
 # ---- 4-column tile grid -------------------------------------------------------
-# Each tile that owns a widget (a clickable chart, a toggle, ...) is wrapped in
-# @st.fragment. A click/toggle inside one tile now reruns only that tile
-# instead of the whole script and every other tile with it. Cross-filtering
-# still needs every OTHER tile to pick up the new selection, so the handlers
-# below still call the bare `st.rerun()` they always did — inside a fragment
-# that's documented to trigger a full app rerun, not a fragment-scoped one.
-# The win is the click itself: it used to cost a full-script rerun just to
-# discover the selection changed (rendering all 9 other tiles with data that
-# was about to be replaced) before the real, propagating rerun could fire.
-# Now that first pass is fragment-scoped, so it skips the other tiles and the
-# cube re-filter entirely.
 GRID_RATIOS = {1: [4], 2: [2, 2], 3: [2, 1, 1], 4: [1, 1, 1, 1]}
 
 
@@ -131,40 +145,60 @@ def grid_row(n: int):
     return st.columns(GRID_RATIOS[n])
 
 
-@st.fragment
+@st.fragment(key="tile_trend")
 def tile_trend():
     with tile("Monthly Revenue Trend (Combo Chart)", "📈"):
-        trend.render(cube_for("trend_chart"), budget_for(), selection, tile_key="trend_chart")
+        trend.render(cube_for("trend_chart"), budget_for(), tile_key="trend_chart")
 
 
-@st.fragment
+@st.fragment(key="tile_regional_margin")
 def tile_regional_margin():
     with tile("Regional Gross Margin", "🌍"):
-        regional_margin.render(cube_for("regional_margin"), selection, tile_key="regional_margin")
+        regional_margin.render(cube_for("regional_margin"), tile_key="regional_margin")
 
 
-@st.fragment
+@st.fragment(key="tile_expense_bullet")
 def tile_expense_bullet():
     with tile("Expense Breakdown vs Budget", "💰"):
-        expense_bullet.render(cube_for("expense_bullet"), budget_for(), selection, tile_key="expense_bullet")
+        expense_bullet.render(cube_for("expense_bullet"), budget_for(), tile_key="expense_bullet")
 
 
-@st.fragment
+@st.fragment(key="tile_treemap")
 def tile_treemap():
     with tile("Revenue by Region & Product", "🌳"):
-        treemap.render(cube_for("treemap"), selection, tile_key="treemap")
+        treemap.render(cube_for("treemap"), tile_key="treemap")
 
 
-@st.fragment
+@st.fragment(key="tile_waterfall")
+def tile_waterfall():
+    with tile("Profitability Waterfall", "💧"):
+        waterfall.render(M.compute_kpis(cube_for(None)), tile_key="waterfall")
+
+
+@st.fragment(key="tile_dept_spend")
 def tile_dept_spend():
     with tile("Dept Spend vs Budget", "🏢"):
-        dept_spend.render(cube_for("dept_spend"), budget_for(), selection, tile_key="dept_spend")
+        dept_spend.render(cube_for("dept_spend"), budget_for(), tile_key="dept_spend")
 
 
-@st.fragment
+@st.fragment(key="tile_top_customers")
+def tile_top_customers():
+    with tile("Top Customers by Revenue", "🏆"):
+        selection = S.get_selection()
+        tx_f = M.filter_raw(tx_full, S.get_filters(), selection.dim, selection.values, selection.source, current_tile=None)
+        top_customers.render(tx_f, tile_key="top_customers")
+
+
+@st.fragment(key="tile_market_share")
 def tile_market_share():
     with tile("Market Share Analysis", "🥧"):
-        market_share.render(filters, tile_key="market_share")
+        market_share.render(S.get_filters(), tile_key="market_share")
+
+
+@st.fragment(key="tile_ebitda")
+def tile_ebitda():
+    with tile("Quarterly EBITDA Margin", "📐"):
+        ebitda.render(cube_for("ebitda"), tile_key="ebitda")
 
 
 # Row 1 (4 tiles)
@@ -181,16 +215,11 @@ with c4:
 # Row 2 (4 tiles)
 c1, c2, c3, c4 = grid_row(4)
 with c1:
-    with tile("Profitability Waterfall", "💧"):
-        waterfall.render(kpis, tile_key="waterfall")
+    tile_waterfall()
 with c2:
     tile_dept_spend()
 with c3:
-    with tile("Top Customers by Revenue", "🏆"):
-        t0 = time.perf_counter()
-        tx_f = M.filter_raw(tx_full, filters, selection.dim, selection.values, selection.source, current_tile=None)
-        perf["raw_filter_ms"] = (time.perf_counter() - t0) * 1000
-        top_customers.render(tx_f, tile_key="top_customers")
+    tile_top_customers()
 with c4:
     with tile("Cash Flow Trends", "💵"):
         cashflow.render(cashflow_df, tile_key="cashflow")
@@ -200,23 +229,33 @@ c1, c2 = grid_row(2)
 with c1:
     tile_market_share()
 with c2:
-    with tile("Quarterly EBITDA Margin", "📐"):
-        ebitda.render(cube_for("ebitda"), tile_key="ebitda")
+    tile_ebitda()
 
 
 # ---- Perf footer + export ------------------------------------------------------
-# Also a fragment: clicking a download/export button here has zero effect on
-# filters or selection, so it has no business re-running the cube build and
-# all 10 tiles above it either.
-@st.fragment
+@st.fragment(key="perf_and_export")
 def perf_and_export():
+    t0 = time.perf_counter()
+    cube_build_ms = (time.perf_counter() - t0) * 1000  # cube_full above is already a cache hit here
+
+    filters = S.get_filters()
+    selection = S.get_selection()
+    t0 = time.perf_counter()
+    cube_f = M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile=None)
+    perf_kpis = M.compute_kpis(cube_f)
+    filter_agg_ms = (time.perf_counter() - t0) * 1000
+
+    t0 = time.perf_counter()
+    tx_f_all = M.filter_raw(tx_full, filters, selection.dim, selection.values, selection.source)
+    raw_filter_ms = (time.perf_counter() - t0) * 1000
+
     with st.expander("⏱ Performance & Export", expanded=False):
         fc1, fc2, fc3, fc4, fc5 = st.columns(5)
-        fc1.metric("Raw rows loaded", f"{perf['raw_rows']:,}")
-        fc2.metric("Cube rows (post-filter)", f"{perf['cube_rows']:,}")
-        fc3.metric("Cube build (cache)", f"{perf['cube_build_ms']:.2f} ms")
-        fc4.metric("Filter + aggregate", f"{perf['filter_agg_ms']:.2f} ms")
-        fc5.metric("Raw-row filter (Top Customers)", f"{perf.get('raw_filter_ms', 0):.2f} ms")
+        fc1.metric("Raw rows loaded", f"{len(tx_full):,}")
+        fc2.metric("Cube rows (post-filter)", f"{len(cube_f):,}")
+        fc3.metric("Cube build (cache)", f"{cube_build_ms:.2f} ms")
+        fc4.metric("Filter + aggregate", f"{filter_agg_ms:.2f} ms")
+        fc5.metric("Raw-row filter (Top Customers)", f"{raw_filter_ms:.2f} ms")
         st.caption(
             "Cube build is cached on the raw table (cache hit after first load, regardless of filter). "
             "Filter+aggregate re-derives KPIs from the ~3-4k row cube on every interaction — this is the "
@@ -227,15 +266,14 @@ def perf_and_export():
         from src import export as E
         ec1, ec2, ec3 = st.columns(3)
         with ec1:
-            st.download_button("Download filtered transactions (CSV)", data=E.csv_bytes(
-                M.filter_raw(tx_full, filters, selection.dim, selection.values, selection.source)
-            ), file_name="gfc_transactions_filtered.csv", mime="text/csv", width='stretch')
+            st.download_button("Download filtered transactions (CSV)", data=E.csv_bytes(tx_f_all),
+                                file_name="gfc_transactions_filtered.csv", mime="text/csv", width='stretch')
         with ec2:
             if st.button("Export dashboard as PDF", width='stretch'):
                 with st.spinner("Re-rendering charts server-side for PDF..."):
                     import plotly.graph_objects as go
                     figs = []
-                    wf_df = M.waterfall_frame(kpis)
+                    wf_df = M.waterfall_frame(perf_kpis)
                     fig = go.Figure(go.Waterfall(x=wf_df["stage"], y=wf_df["value"],
                                                   measure=["absolute" if k == "total" else "relative" for k in wf_df["kind"]]))
                     fig.update_layout(**T.PLOTLY_LAYOUT, height=400)
@@ -244,8 +282,8 @@ def perf_and_export():
                         title="Global FinCorp — Financial Performance",
                         subtitle="Q1-Q3 2023 · exported from Streamlit prototype",
                         kpi_lines=[
-                            f"Revenue ${kpis.revenue:,.0f}", f"Gross Profit ${kpis.gross_profit:,.0f}",
-                            f"OpEx ${kpis.opex:,.0f}", f"Net Income ${kpis.net_income:,.0f}",
+                            f"Revenue ${perf_kpis.revenue:,.0f}", f"Gross Profit ${perf_kpis.gross_profit:,.0f}",
+                            f"OpEx ${perf_kpis.opex:,.0f}", f"Net Income ${perf_kpis.net_income:,.0f}",
                         ],
                         images=figs,
                     )

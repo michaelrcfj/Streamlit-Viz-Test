@@ -58,6 +58,11 @@ function buildOption(args) {
         itemStyle: { borderColor: theme.tileBg || "#fff", borderWidth: 2 },
         label: { show: false },
         emphasis: { label: { show: true, fontSize: 13, fontWeight: 600, fontFamily: theme.fontMono || "monospace" } },
+        // Native click-to-select visual: ECharts tracks which slice was
+        // clicked entirely client-side and applies this style to it, with no
+        // re-render from our side needed to show or keep showing it.
+        selectedMode: args.clickable ? "single" : false,
+        select: { itemStyle: { borderColor: theme.ink || "#1a1a17", borderWidth: 3 } },
         data: args.data || [],
       }],
     };
@@ -85,6 +90,9 @@ function buildOption(args) {
         {
           name: "Actual", type: "bar", data: args.actual || [], barWidth: 14,
           itemStyle: { color: (params) => (args.overBudget && args.overBudget[params.dataIndex]) ? (theme.critical || "#d03b3b") : (theme.accent || "#18794e"), borderRadius: [0, 4, 4, 0] },
+          // Native click-to-select visual, same mechanism as the donut above.
+          selectedMode: args.clickable ? "single" : false,
+          select: { itemStyle: { borderColor: theme.ink || "#1a1a17", borderWidth: 2 } },
         },
         {
           name: "Budget", type: "scatter", symbol: "rect", symbolSize: [3, 22],
