@@ -44,10 +44,18 @@ SERIES = {
 SERIES_ORDER = ["Software", "Services", "Hardware"]
 
 REGION_SERIES = {
-    "NAM": "#2a78d6",  # not "NA" -- reads too much like "N/A" (missing data)
-    "EMEA": "#eb6834",
-    "APAC": "#1baf7a",
-    "LATAM": "#eda100",
+    # Slots 5-8 of the same 8-hue categorical order, not 1-3 -- Region and
+    # Product (SERIES, above) are separate categorical dimensions that show
+    # up in adjacent tiles (Monthly Revenue Trend / Regional Gross Margin),
+    # so they need disjoint hues or "Services" and "EMEA" paint identically.
+    # Validated adjacent-pair-safe as a 4-set (worst CVD dE 17.6, worst
+    # normal-vision dE 33.6); the magenta slot is sub-3:1 contrast on the
+    # tile surface, so it leans on this chart's existing direct labels
+    # (region name + margin %) rather than hue alone.
+    "NAM": "#e87ba4",  # not "NA" -- reads too much like "N/A" (missing data)
+    "EMEA": "#008300",
+    "APAC": "#4a3aa7",
+    "LATAM": "#e34948",
 }
 REGION_ORDER = ["NAM", "EMEA", "APAC", "LATAM"]
 
