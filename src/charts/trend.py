@@ -10,10 +10,14 @@ from src import theme as T
 from src.data import metrics as M
 
 
-def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, tile_key: str):
+def render(cube_f: pd.DataFrame, tile_key: str):
     by_product = M.monthly_revenue_by_product(cube_f)
     months = sorted(by_product["month"].unique())
-    budget_monthly = budget_f[budget_f["account"] == "Revenue"].groupby("month", observed=True)["budget_amount"].sum()
+    # Budget rides on the same filtered rows as the bars, so the target line
+    # now narrows with a selection instead of staying at whole-book scale
+    # while the bars shrank under it.
+    revenue = cube_f[cube_f["account"] == "Revenue"]
+    budget_monthly = revenue.groupby("month", observed=True)["budget_amount"].sum()
 
     # NOTE: this figure must NOT vary based on selection state even when this
     # tile is the one that owns it — restyling the source chart in reaction

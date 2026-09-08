@@ -12,8 +12,8 @@ from src.data import metrics as M
 DEPT_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7", "#e34948"]
 
 
-def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, tile_key: str):
-    df = M.department_spend_vs_budget(cube_f, budget_f)
+def render(cube_f: pd.DataFrame, tile_key: str):
+    df = M.department_spend_vs_budget(cube_f)
     if df.empty:
         st.info("No data in the current filter.")
         return
@@ -22,7 +22,6 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, tile_key: str):
     dept_color = {d: DEPT_COLORS[i % len(DEPT_COLORS)] for i, d in enumerate(depts)}
 
     fig = go.Figure()
-    actual_total = df.groupby("month", observed=True)["amount"].sum().reindex(months, fill_value=0)
     budget_total = df.groupby("month", observed=True)["budget_amount"].sum().reindex(months, fill_value=0)
 
     # This figure intentionally does not vary with selection state even for

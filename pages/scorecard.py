@@ -112,6 +112,7 @@ st.markdown(
     """
 - **No multi-user / auth / row-level security** tested — this is single-session.
 - **No live/scheduled data refresh** — reads static Parquet; `@st.cache_data(ttl=...)` is the standard pattern for a live warehouse, not exercised here.
+- **One fact table, not four files.** Actual and plan share a row (`facts.parquet`), so a vs-budget tile filters once and reads two columns instead of filtering a second budget table on the same predicates and merging it back; cash flow is derived from those rows rather than stored. Competitor market share stays separate — it has no join key to the fact table. Worth knowing because the filtering code shrank more than the file count did.
 - **Responsive/mobile** not hardened — the CSS assumes a desktop-width dense BI grid.
 - **Streamlit's native theming is more capable than commonly assumed** — `config.toml`'s categorical/sequential/diverging chart colors and per-sidebar overrides did real work, reducing reliance on the injected CSS layer (the fragile part, per #4 above).
 - **Running Streamlit 1.63.** Upgraded from 1.58 specifically for `st.rerun(scope=[...])`'s targeted multi-fragment reruns (see "Rerun latency & scale" above) — that one capability drove most of the interaction-layer rewrite.

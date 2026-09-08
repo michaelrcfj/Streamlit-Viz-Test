@@ -166,12 +166,13 @@ def clear_selection_if_owned_by(source: str) -> bool:
 # without the sidebar in scope that widget's displayed value would stay
 # stuck on its old value until some future full-app rerun caught it up.
 #
-# "tile_cashflow" is deliberately absent: Cash Flow Trends never depends on
-# filters or selection, so it never needs to be included.
+# "tile_cashflow" is in the list now: cash flow used to read its own static
+# table and ignore the filters entirely, but it's derived from the same fact
+# rows as everything else (metrics.cash_flow_by_month), so it moves with them.
 DEPENDENT_FRAGMENTS = [
     "sidebar_filters", "kpi_strip", "chips",
     "tile_trend", "tile_regional_margin", "tile_expense_bullet", "tile_treemap",
-    "tile_waterfall", "tile_dept_spend", "tile_top_customers", "tile_market_share", "tile_ebitda",
+    "tile_waterfall", "tile_dept_spend", "tile_top_customers", "tile_market_share", "tile_cashflow",
     "perf_and_export",
 ]
 

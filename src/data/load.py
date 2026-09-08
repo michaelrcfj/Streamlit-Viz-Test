@@ -17,8 +17,10 @@ DATA_DIR = ROOT / "data"
 
 
 @st.cache_data(show_spinner=False)
-def load_transactions() -> pd.DataFrame:
-    path = DATA_DIR / "transactions.parquet"
+def load_facts() -> pd.DataFrame:
+    """The one internal dataset: actuals and plan at row grain. Cash flow is
+    derived from these rows rather than stored (metrics.cash_flow_by_month)."""
+    path = DATA_DIR / "facts.parquet"
     if not path.exists():
         raise FileNotFoundError(
             f"{path} not found — run `python scripts/generate_data.py` once "
@@ -28,19 +30,11 @@ def load_transactions() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
-def load_budget() -> pd.DataFrame:
-    return pd.read_parquet(DATA_DIR / "budget.parquet")
-
-
-@st.cache_data(show_spinner=False)
 def load_market_share() -> pd.DataFrame:
+    """Competitor share. Kept separate because competitor is not a dimension
+    of the fact table — there is no honest key to fold it in on."""
     return pd.read_parquet(DATA_DIR / "market_share.parquet")
 
 
-@st.cache_data(show_spinner=False)
-def load_cashflow() -> pd.DataFrame:
-    return pd.read_parquet(DATA_DIR / "cashflow.parquet")
-
-
 def data_ready() -> bool:
-    return (DATA_DIR / "transactions.parquet").exists()
+    return (DATA_DIR / "facts.parquet").exists()
