@@ -5,14 +5,14 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src import state as S
 from src import theme as T
 from src.data import metrics as M
-from src.state import Selection, clear_selection_if_owned_by, consume_once, set_selection_if_changed
 
 DEPT_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#4a3aa7", "#e34948"]
 
 
-def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, tile_key: str):
+def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, tile_key: str):
     df = M.department_spend_vs_budget(cube_f, budget_f)
     if df.empty:
         st.info("No data in the current filter.")
@@ -25,9 +25,10 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
     actual_total = df.groupby("month", observed=True)["amount"].sum().reindex(months, fill_value=0)
     budget_total = df.groupby("month", observed=True)["budget_amount"].sum().reindex(months, fill_value=0)
 
-    # This figure intentionally does not vary with `selection` even for its
-    # own selected department — see trend.py for why that causes a
-    # selection-erasing feedback loop.
+    # This figure intentionally does not vary with selection state even for
+    # its own selected department — see trend.py for why that causes a
+    # selection-erasing feedback loop. The clicked bar is still highlighted
+    # by Plotly's own selection_mode dimming, entirely client-side.
     for dept in depts:
         # Reindex just the amount Series, not the whole frame -- reindexing
         # the frame would need a fill value for the "department" column too,
@@ -47,14 +48,16 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
     layout = {**T.PLOTLY_LAYOUT, "yaxis": {**T.PLOTLY_LAYOUT["yaxis"], "tickformat": "$,.0s"}}
     fig.update_layout(**layout, barmode="stack", height=T.CHART_HEIGHT)
 
-    event = st.plotly_chart(fig, width='stretch', key=tile_key, on_select="rerun", selection_mode="points")
-    # Map curve_number -> department (trace order == depts, budget line is last).
-    points = (event or {}).get("selection", {}).get("points", [])
-    values = sorted({depts[p["curve_number"]] for p in points if p.get("curve_number", -1) < len(depts)})
+    widget_key = S.chart_widget_key(tile_key)
 
-    if values:
-        if consume_once(tile_key, ("select", tuple(values))) and set_selection_if_changed("department", values, tile_key):
-            st.rerun()
-    else:
-        if consume_once(tile_key, ("clear",)) and clear_selection_if_owned_by(tile_key):
-            st.rerun()
+    def _on_select():
+        event = st.session_state[widget_key]
+        # Map curve_number -> department (trace order == depts, budget line is last).
+        points = (event or {}).get("selection", {}).get("points", [])
+        values = sorted({depts[p["curve_number"]] for p in points if p.get("curve_number", -1) < len(depts)})
+        if values:
+            S.apply_selection("department", values, tile_key)
+        else:
+            S.apply_selection_clear(tile_key)
+
+    st.plotly_chart(fig, width='stretch', key=widget_key, on_select=_on_select, selection_mode="points")

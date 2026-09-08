@@ -126,31 +126,9 @@ def clear_selection():
     st.session_state["sel_source"] = None
 
 
-def consume_once(tile_key: str, payload) -> bool:
-    """Returns True the first time `payload` is seen for this tile_key, False
-    on every subsequent rerun with the same payload.
-
-    Plotly/Altair/component selection state is STICKY — it persists as the
-    widget's current value across reruns until the user changes it, so a
-    chart's on_select handler runs on *every* script execution, not just the
-    one right after a click. Without this guard, reacting to that value
-    (calling st.rerun(), opening a dialog) would refire on every unrelated
-    rerun, either looping forever or re-opening a dialog the user just
-    closed. This makes reacting to a selection idempotent per distinct value.
-    """
-    marker_key = f"_consumed_{tile_key}"
-    key_repr = repr(payload)
-    if st.session_state.get(marker_key) == key_repr:
-        return False
-    st.session_state[marker_key] = key_repr
-    return True
-
-
 def set_selection_if_changed(dim: str, values: list, source: str) -> bool:
     """Updates the selection and returns True only if it actually changed
-    vs. the current one — use this + st.rerun() so a click propagates to
-    every other tile on the SAME interaction, without looping once the
-    state has settled (see consume_once for why that matters)."""
+    vs. the current one."""
     values = sorted(values)
     current = get_selection()
     if current.dim == dim and sorted(current.values) == values and current.source == source:
@@ -168,6 +146,102 @@ def clear_selection_if_owned_by(source: str) -> bool:
         clear_selection()
         return True
     return False
+
+
+# ---- Fragment-targeted reruns -------------------------------------------------
+#
+# Every fragment below is defined in pages/dashboard.py with a `key=` matching
+# one of these strings. All of them read filters/selection fresh from
+# session_state on every render (never from a stale closure), so a targeted
+# `st.rerun(scope=DEPENDENT_FRAGMENTS)` re-renders exactly the tiles whose
+# content actually depends on filters/selection -- not the whole page. This is
+# what fixes the "whole dashboard disappears for a second" flash a plain
+# st.rerun() (full app scope) causes: elements outside the named fragments
+# are never torn down in the first place, so there's nothing to reload.
+#
+# "sidebar_filters" is here even though a filter widget's own value change
+# already updates its own display optimistically client-side: a widget's
+# value can also change from a DIFFERENT fragment (apply_clear_all_filters
+# resets f_region/f_product/f_department/f_period programmatically), and
+# without the sidebar in scope that widget's displayed value would stay
+# stuck on its old value until some future full-app rerun caught it up.
+#
+# "tile_cashflow" is deliberately absent: Cash Flow Trends never depends on
+# filters or selection, so it never needs to be included.
+DEPENDENT_FRAGMENTS = [
+    "sidebar_filters", "kpi_strip", "chips",
+    "tile_trend", "tile_regional_margin", "tile_expense_bullet", "tile_treemap",
+    "tile_waterfall", "tile_dept_spend", "tile_top_customers", "tile_market_share", "tile_ebitda",
+    "perf_and_export",
+]
+
+
+def _refresh():
+    """Every state-mutating callback ends with this: sync the URL to the
+    just-changed session_state, then rerun only the fragments that depend on
+    it. Must be called from a genuine widget callback (on_change/on_click) --
+    st.rerun() with an explicit fragment scope raises outside of one."""
+    sync_url()
+    st.rerun(scope=DEPENDENT_FRAGMENTS)
+
+
+def apply_selection(dim: str, values: list, source: str):
+    """on_select callback body for a click-to-filter chart: commit the new
+    selection and, if it actually changed, refresh every dependent tile."""
+    if set_selection_if_changed(dim, values, source):
+        _refresh()
+
+
+def apply_selection_clear(source: str):
+    """on_select callback body for a chart's selection going empty (e.g. the
+    user clicked the already-selected mark to deselect it)."""
+    if clear_selection_if_owned_by(source):
+        _refresh()
+
+
+def apply_reset_selection():
+    """on_click callback for the header's "Reset selection" button."""
+    clear_selection()
+    _refresh()
+
+
+def apply_filters_changed():
+    """on_change callback for every sidebar filter widget. The widget's own
+    `key=` binding already updated session_state by the time this runs --
+    this just propagates that to the tiles that depend on it."""
+    _refresh()
+
+
+def chart_widget_key(tile_key: str) -> str:
+    """The key a click-to-filter chart should register its widget under.
+
+    Native chart libraries (Plotly, Vega-Lite/Altair) highlight whatever the
+    user last clicked entirely client-side, and that highlight survives a
+    rerun for free as long as the widget keeps the same key -- which is
+    exactly what we want while this tile still owns the active selection (or
+    nothing is selected yet): it's what makes the click-to-filter feel
+    instant.
+
+    But once some OTHER tile takes over the active selection, this tile's
+    own chart is never told to clear its stale highlight -- it just keeps
+    showing whatever was last clicked here, which now has nothing to do with
+    the active filter. Busting the key exactly then forces a fresh mount
+    (clearing that stale highlight) without ever touching the tile that IS
+    currently selecting, so it can't reintroduce the self-restyle-wipes-
+    selection bug that owning tile has to avoid (see trend.py)."""
+    source = get_selection().source
+    if source in (None, tile_key):
+        return tile_key
+    return f"{tile_key}__inactive_{source}"
+
+
+def apply_clear_all_filters():
+    """on_click callback for the sidebar's "Clear all filters" button."""
+    for dim in ("f_region", "f_product", "f_department"):
+        st.session_state[dim] = []
+    st.session_state["f_period"] = "All"
+    clear_selection()
+    _refresh()
 
 
 def active_filter_chips() -> list[tuple[str, str]]:

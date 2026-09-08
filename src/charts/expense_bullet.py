@@ -6,15 +6,15 @@ is still demonstrable via the same JS bridge."""
 import pandas as pd
 import streamlit as st
 
+from src import state as S
 from src import theme as T
 from src.components.echarts import echarts_bullet, echarts_gauges
 from src.data import metrics as M
-from src.state import Selection, consume_once, set_selection_if_changed
 
 _CHART_H = T.CHART_HEIGHT - T.CONTROL_ROW_HEIGHT  # this tile also has the gauge-variant toggle
 
 
-def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, tile_key: str):
+def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, tile_key: str):
     df = M.expense_breakdown(cube_f, budget_f)
     if df.empty:
         st.info("No data in the current filter.")
@@ -34,15 +34,19 @@ def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, selection: Selection, t
         echarts_gauges(gauges, key=f"{tile_key}_gauge", height=_CHART_H)
         return
 
-    clicked = echarts_bullet(
+    widget_key = S.chart_widget_key(tile_key)
+
+    def _on_select():
+        clicked = st.session_state[widget_key]
+        if clicked and clicked.get("name"):
+            S.apply_selection("department", [clicked["name"]], tile_key)
+
+    echarts_bullet(
         categories=df["department"].tolist(),
         actual=df["actual"].round(0).tolist(),
         budget=df["budget"].round(0).tolist(),
         over_budget=(df["pct_of_budget"] > 100).tolist(),
-        key=tile_key,
+        key=widget_key,
         height=_CHART_H,
+        on_change=_on_select,
     )
-    if clicked and clicked.get("name"):
-        dept = clicked["name"]
-        if consume_once(tile_key, ("select", dept)) and set_selection_if_changed("department", [dept], tile_key):
-            st.rerun()

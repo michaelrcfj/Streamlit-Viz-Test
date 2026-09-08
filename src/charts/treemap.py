@@ -8,9 +8,9 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from src import state as S
 from src import theme as T
 from src.data import metrics as M
-from src.state import Selection, clear_selection_if_owned_by, consume_once, set_selection_if_changed
 
 
 def _tint(hex_color: str, amount: float) -> str:
@@ -23,7 +23,7 @@ def _tint(hex_color: str, amount: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
+def render(cube_f: pd.DataFrame, tile_key: str):
     df = M.revenue_by_region_product(cube_f)
     if df.empty:
         st.info("No revenue in the current filter.")
@@ -61,19 +61,21 @@ def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
     ))
     fig.update_layout(**{k: v for k, v in T.PLOTLY_LAYOUT.items() if k not in ("xaxis", "yaxis")}, height=T.CHART_HEIGHT)
 
-    event = st.plotly_chart(fig, width='stretch', key=tile_key, on_select="rerun", selection_mode="points")
-    points = (event or {}).get("selection", {}).get("points", [])
-    product = None
-    if points:
-        clicked_id = points[0].get("id") or points[0].get("label")
-        if clicked_id and "/" in str(clicked_id):
-            product = clicked_id.split("/")[0]
-        elif clicked_id in T.SERIES_ORDER:
-            product = clicked_id
+    widget_key = S.chart_widget_key(tile_key)
 
-    if product:
-        if consume_once(tile_key, ("select", product)) and set_selection_if_changed("product", [product], tile_key):
-            st.rerun()
-    else:
-        if consume_once(tile_key, ("clear",)) and clear_selection_if_owned_by(tile_key):
-            st.rerun()
+    def _on_select():
+        event = st.session_state[widget_key]
+        points = (event or {}).get("selection", {}).get("points", [])
+        product = None
+        if points:
+            clicked_id = points[0].get("id") or points[0].get("label")
+            if clicked_id and "/" in str(clicked_id):
+                product = clicked_id.split("/")[0]
+            elif clicked_id in T.SERIES_ORDER:
+                product = clicked_id
+        if product:
+            S.apply_selection("product", [product], tile_key)
+        else:
+            S.apply_selection_clear(tile_key)
+
+    st.plotly_chart(fig, width='stretch', key=widget_key, on_select=_on_select, selection_mode="points")

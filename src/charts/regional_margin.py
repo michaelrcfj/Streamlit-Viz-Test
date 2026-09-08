@@ -6,12 +6,12 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from src import state as S
 from src import theme as T
 from src.data import metrics as M
-from src.state import Selection, clear_selection_if_owned_by, consume_once, set_selection_if_changed
 
 
-def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
+def render(cube_f: pd.DataFrame, tile_key: str):
     df = M.regional_margin(cube_f)
     if df.empty:
         st.info("No data in the current filter.")
@@ -27,6 +27,13 @@ def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
             y=alt.Y("region:N", sort=None, title=None),
             x=alt.X("revenue:Q", title="Revenue", axis=alt.Axis(format="$,.2s")),
             color=alt.Color("region:N", scale=alt.Scale(domain=T.REGION_ORDER, range=list(T.REGION_SERIES.values())), legend=None),
+            # Dims non-selected bars the instant a mark is clicked. This is
+            # driven entirely by the `click` param below, which Vega-Lite
+            # tracks client-side -- it is never conditioned on backend
+            # selection state, so (unlike the Plotly charts, see trend.py)
+            # there's no self-restyle-wipes-selection risk to worry about
+            # even if this tile ends up owning the selection.
+            opacity=alt.condition(click, alt.value(1.0), alt.value(0.35)),
             tooltip=[
                 alt.Tooltip("region:N", title="Region"),
                 alt.Tooltip("revenue:Q", title="Revenue", format="$,.0f"),
@@ -41,17 +48,19 @@ def render(cube_f: pd.DataFrame, selection: Selection, tile_key: str):
     )
 
     chart = bars + labels
-    event = st.altair_chart(chart, width='stretch', key=tile_key, on_select="rerun")
-    sel = (event or {}).get("selection", {}).get("region_click")
-    regions = []
-    if isinstance(sel, dict):
-        regions = sel.get("region", [])
-    elif isinstance(sel, list):
-        regions = [p["region"] for p in sel if "region" in p]
+    widget_key = S.chart_widget_key(tile_key)
 
-    if regions:
-        if consume_once(tile_key, ("select", tuple(sorted(regions)))) and set_selection_if_changed("region", list(regions), tile_key):
-            st.rerun()
-    else:
-        if consume_once(tile_key, ("clear",)) and clear_selection_if_owned_by(tile_key):
-            st.rerun()
+    def _on_select():
+        event = st.session_state[widget_key]
+        sel = (event or {}).get("selection", {}).get("region_click")
+        regions = []
+        if isinstance(sel, dict):
+            regions = sel.get("region", [])
+        elif isinstance(sel, list):
+            regions = [p["region"] for p in sel if "region" in p]
+        if regions:
+            S.apply_selection("region", list(regions), tile_key)
+        else:
+            S.apply_selection_clear(tile_key)
+
+    st.altair_chart(chart, width='stretch', key=widget_key, on_select=_on_select)

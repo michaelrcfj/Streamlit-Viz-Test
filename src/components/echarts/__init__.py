@@ -37,10 +37,11 @@ def echarts_donut(data: list[dict], colors: list[str], series_name: str = "Share
 
 def echarts_bullet(categories: list[str], actual: list[float], budget: list[float],
                     over_budget: list[bool], clickable: bool = True,
-                    key: str | None = None, height: int = 260):
+                    key: str | None = None, height: int = 260, on_change=None):
     return _echarts_component(
         kind="bullet", categories=categories, actual=actual, budget=budget, height=height,
         overBudget=over_budget, clickable=clickable, theme=_THEME_PROPS, key=key, default=None,
+        on_change=on_change,
     )
 
 
