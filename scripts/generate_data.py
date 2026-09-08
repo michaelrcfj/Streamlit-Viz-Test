@@ -4,13 +4,25 @@ dashboard. Run once; the output under data/ is committed to the repo so the
 app (including on Streamlit Community Cloud, which has no pre-launch script
 step) just reads it off disk rather than regenerating it per run.
 
+Two datasets, not four. Everything internal lives in ONE fact table:
+
+  facts.parquet        ~100k rows. Actuals AND plan at row grain: every row
+                       carries both `amount` and `budget_amount`, so a single
+                       filter pass serves every actual-vs-budget tile and the
+                       aggregation cube carries plan for free. Cash flow is
+                       NOT stored — it is derived from these same rows at
+                       read time (see metrics.cash_flow_by_month).
+  market_share.parquet 60 rows. The one genuinely external entity: competitor
+                       is not a transaction dimension, so it cannot be folded
+                       into the fact table without inventing a join key.
+
 Design goals:
   - ~100k transaction rows with real seasonality, growth trend, and
     region/product skew so cross-filtering visibly moves every tile.
-  - All headline KPIs (revenue, gross profit, opex, net income, EBITDA) are
-    DERIVED from these rows downstream (see src/data/metrics.py) — never
-    hardcoded — so the KPI strip reconciles with the waterfall by
-    construction, unlike the source screenshot.
+  - All headline KPIs (revenue, gross profit, opex, net income) are DERIVED
+    from these rows downstream (see src/data/metrics.py) — never hardcoded —
+    so the KPI strip reconciles with the waterfall by construction, unlike
+    the source screenshot.
   - Deterministic: numpy.random.default_rng(42), so re-running this script
     reproduces byte-identical data.
 
@@ -134,20 +146,30 @@ def generate_transactions(rng, n_rows: int) -> pd.DataFrame:
     return df
 
 
-def generate_budget(rng, tx: pd.DataFrame) -> pd.DataFrame:
-    """Budget targets per month x region x product x department x account,
-    built as actuals +/- a controlled variance so 'vs budget' is meaningful."""
-    grp = (
-        tx.groupby(["month", "region", "product", "department", "account"], observed=True)["amount"]
-        .sum()
-        .reset_index()
+def add_budget(rng, tx: pd.DataFrame) -> pd.DataFrame:
+    """Adds a per-row `budget_amount` so plan travels with actuals in one table.
+
+    The variance is drawn per CELL (month x region x product x department x
+    account) and then applied to every row in that cell, not drawn per row.
+    That matters: with a per-row draw the noise would average out on the way
+    up to the cube, leaving every department sitting at a flat ~3% to budget
+    and the variance charts with nothing to show. Drawing per cell means
+    summing rows to any grain reproduces exactly the cell-level variance a
+    separate budget table would have carried."""
+    cell = (
+        tx["month"].astype(str) + "|" + tx["region"].astype(str) + "|"
+        + tx["product"].astype(str) + "|" + tx["department"].astype(str) + "|"
+        + tx["account"].astype(str)
     )
-    variance = rng.normal(loc=0.0, scale=0.08, size=len(grp))
+    # Sorted, so a cell's variance depends only on the cell's identity — not
+    # on which row of the 100k happened to hit it first.
+    cells = pd.Index(sorted(cell.unique()))
+    variance = pd.Series(rng.normal(loc=0.0, scale=0.08, size=len(cells)), index=cells)
     # Budgets set slightly conservative on revenue (actual tends to beat budget)
     # and slightly loose on cost accounts (actual tends to beat/undercut too).
-    bias = np.where(grp["account"] == "Revenue", -0.04, 0.03)
-    grp["budget_amount"] = np.round(grp["amount"] * (1 + bias + variance), 2)
-    return grp.drop(columns="amount")
+    bias = np.where(tx["account"] == "Revenue", -0.04, 0.03)
+    tx["budget_amount"] = np.round(tx["amount"] * (1 + bias + cell.map(variance).to_numpy()), 2)
+    return tx
 
 
 def generate_market_share(rng) -> pd.DataFrame:
@@ -162,22 +184,6 @@ def generate_market_share(rng) -> pd.DataFrame:
             shares = shares / shares.sum() * 100
             for name, share in zip(base.keys(), shares):
                 rows.append({"quarter": q, "region": region, "competitor": name, "share_pct": round(float(share), 2)})
-    return pd.DataFrame(rows)
-
-
-def generate_cashflow(rng, tx: pd.DataFrame) -> pd.DataFrame:
-    months = sorted(tx["month"].unique())
-    net_income_by_month = (
-        tx.assign(signed=np.where(tx["account"] == "Revenue", tx["amount"], -tx["amount"]))
-        .groupby("month", observed=True)["signed"].sum()
-    )
-    rows = []
-    for m in months:
-        ni = net_income_by_month.get(m, 0.0)
-        operating = ni * rng.uniform(0.75, 0.95) + rng.normal(0, ni * 0.05)
-        investing = -abs(rng.normal(ni * 0.18, ni * 0.06))
-        financing = rng.normal(-ni * 0.08, ni * 0.05)
-        rows.append({"month": m, "Operating": round(operating, 2), "Investing": round(investing, 2), "Financing": round(financing, 2)})
     return pd.DataFrame(rows)
 
 
@@ -199,22 +205,17 @@ def main():
 
     DATA_DIR.mkdir(exist_ok=True)
 
-    print(f"Generating {n_rows:,} transaction rows...")
-    tx = generate_transactions(rng, n_rows)
-    assert_invariants(tx)
-    tx.to_parquet(DATA_DIR / "transactions.parquet", index=False)
-
-    budget = generate_budget(rng, tx)
-    budget.to_parquet(DATA_DIR / "budget.parquet", index=False)
+    print(f"Generating {n_rows:,} fact rows...")
+    facts = generate_transactions(rng, n_rows)
+    assert_invariants(facts)
+    facts = add_budget(rng, facts)
+    facts.to_parquet(DATA_DIR / "facts.parquet", index=False)
 
     market_share = generate_market_share(rng)
     market_share.to_parquet(DATA_DIR / "market_share.parquet", index=False)
 
-    cashflow = generate_cashflow(rng, tx)
-    cashflow.to_parquet(DATA_DIR / "cashflow.parquet", index=False)
-
-    print(f"Wrote transactions.parquet ({len(tx):,} rows), budget.parquet ({len(budget):,} rows), "
-          f"market_share.parquet ({len(market_share)} rows), cashflow.parquet ({len(cashflow)} rows)")
+    print(f"Wrote facts.parquet ({len(facts):,} rows, actual + budget), "
+          f"market_share.parquet ({len(market_share)} rows)")
 
 
 if __name__ == "__main__":

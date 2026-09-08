@@ -1,8 +1,8 @@
 """The Global FinCorp dashboard grid.
 
-Layout: a fixed 4-column grid. A row of 4 tiles splits evenly; a shorter
-final row still fills the full width by giving its tiles wider ratios so
-the total always sums to 4 "slots" (e.g. 2 tiles -> 2 slots each).
+Layout: a fixed 4-column grid. Every row sums to 4 "slots", so a row can hold
+four even tiles, two double-width ones, or a mix (row 2 runs 1-1-2, giving
+the Top Customers table the width its sparkline and progress columns want).
 
 Every tile below is its own @st.fragment, keyed and listed in
 S.DEPENDENT_FRAGMENTS. A click-to-filter chart, a sidebar filter, or one of
@@ -10,21 +10,21 @@ the two clear/reset buttons all end up calling one of the S.apply_*
 callbacks, which commits the change and calls
 `st.rerun(scope=S.DEPENDENT_FRAGMENTS)` -- a TARGETED rerun of exactly the
 tiles whose content depends on filters/selection, not a full-page one.
-Nothing outside that list (the sidebar widgets themselves, the static Cash
-Flow tile) is ever torn down, so there's no "whole dashboard blanks out for
-a second" flash: only the fragments that actually need new data disappear
-and reappear, and only while their own new content is on the way.
+Nothing outside that list is ever torn down, so there's no "whole dashboard
+blanks out for a second" flash: only the fragments that actually need new
+data disappear and reappear, and only while their own new content is on the
+way.
 
 Because a targeted rerun re-invokes each fragment's stored closure directly
 without re-running the rest of this script, every fragment below reads
-filters/selection fresh from session_state (via cube_for/budget_for or
+filters/selection fresh from session_state (via cube_for() or
 S.get_filters()/S.get_selection() directly) rather than closing over the
 `filters`/`selection` this script computed on its last full run -- that
 closure would otherwise go stale the moment a targeted rerun (rather than a
-full one) is what updated the underlying state. cube_full/budget_full/
-tx_full/cashflow_df are the exception: they're `@st.cache_data`-backed and
-never change for the session, so a stale reference to them is byte-for-byte
-identical to a fresh one and closing over them is fine.
+full one) is what updated the underlying state. facts_full/cube_full are the
+exception: they're `@st.cache_data`-backed and never change for the session,
+so a stale reference to them is byte-for-byte identical to a fresh one and
+closing over them is fine.
 """
 
 import time
@@ -33,11 +33,11 @@ import streamlit as st
 
 from src import state as S
 from src import theme as T
-from src.charts import cashflow, dept_spend, ebitda, expense_bullet, kpi as kpi_chart
+from src.charts import cashflow, dept_spend, expense_bullet, kpi as kpi_chart
 from src.charts import market_share, regional_margin, top_customers, treemap, trend, waterfall
 from src.components.tile import tile
 from src.data import metrics as M
-from src.data.load import data_ready, load_budget, load_cashflow, load_transactions
+from src.data.load import data_ready, load_facts
 
 S.bootstrap()
 
@@ -49,20 +49,16 @@ if not data_ready():
     )
     st.stop()
 
-tx_full = load_transactions()
-cube_full = M.build_cube(tx_full)
-budget_full = load_budget()
-cashflow_df = load_cashflow()
+facts_full = load_facts()
+cube_full = M.build_cube(facts_full)
 
 
 def cube_for(tile_key: str | None):
+    """Every tile's data in one call: the cube carries actual and budget as
+    columns, so there is no second frame to filter alongside this one."""
     filters = S.get_filters()
     selection = S.get_selection()
     return M.filter_cube(cube_full, filters, selection.dim, selection.values, selection.source, current_tile=tile_key)
-
-
-def budget_for():
-    return M.filter_budget(budget_full, S.get_filters())
 
 
 # ---- Sidebar: global filters -------------------------------------------------
@@ -79,8 +75,8 @@ def sidebar_filters():
 
     all_regions = list(T.REGION_ORDER)
     all_products = list(T.SERIES_ORDER)
-    all_depts = sorted(tx_full["department"].cat.categories.tolist())
-    all_periods = ["All"] + sorted(tx_full["quarter"].unique().tolist())
+    all_depts = sorted(facts_full["department"].cat.categories.tolist())
+    all_periods = ["All"] + sorted(facts_full["quarter"].unique().tolist())
 
     st.multiselect("Region", all_regions, key="f_region", on_change=S.apply_filters_changed)
     st.multiselect("Product", all_products, key="f_product", on_change=S.apply_filters_changed)
@@ -141,14 +137,16 @@ kpi_strip()
 GRID_RATIOS = {1: [4], 2: [2, 2], 3: [2, 1, 1], 4: [1, 1, 1, 1]}
 
 
-def grid_row(n: int):
-    return st.columns(GRID_RATIOS[n])
+def grid_row(n: int, ratios: list[int] | None = None):
+    """`ratios` overrides the default split for that tile count — it still has
+    to sum to 4 slots so the row lines up with the rest of the grid."""
+    return st.columns(ratios or GRID_RATIOS[n])
 
 
 @st.fragment(key="tile_trend")
 def tile_trend():
     with tile("Monthly Revenue Trend (Combo Chart)", "📈"):
-        trend.render(cube_for("trend_chart"), budget_for(), tile_key="trend_chart")
+        trend.render(cube_for("trend_chart"), tile_key="trend_chart")
 
 
 @st.fragment(key="tile_regional_margin")
@@ -160,7 +158,7 @@ def tile_regional_margin():
 @st.fragment(key="tile_expense_bullet")
 def tile_expense_bullet():
     with tile("Expense Breakdown vs Budget", "💰"):
-        expense_bullet.render(cube_for("expense_bullet"), budget_for(), tile_key="expense_bullet")
+        expense_bullet.render(cube_for("expense_bullet"), tile_key="expense_bullet")
 
 
 @st.fragment(key="tile_treemap")
@@ -178,15 +176,15 @@ def tile_waterfall():
 @st.fragment(key="tile_dept_spend")
 def tile_dept_spend():
     with tile("Dept Spend vs Budget", "🏢"):
-        dept_spend.render(cube_for("dept_spend"), budget_for(), tile_key="dept_spend")
+        dept_spend.render(cube_for("dept_spend"), tile_key="dept_spend")
 
 
 @st.fragment(key="tile_top_customers")
 def tile_top_customers():
     with tile("Top Customers by Revenue", "🏆"):
         selection = S.get_selection()
-        tx_f = M.filter_raw(tx_full, S.get_filters(), selection.dim, selection.values, selection.source, current_tile=None)
-        top_customers.render(tx_f, tile_key="top_customers")
+        facts_f = M.filter_raw(facts_full, S.get_filters(), selection.dim, selection.values, selection.source, current_tile=None)
+        top_customers.render(facts_f, tile_key="top_customers")
 
 
 @st.fragment(key="tile_market_share")
@@ -195,10 +193,10 @@ def tile_market_share():
         market_share.render(S.get_filters(), tile_key="market_share")
 
 
-@st.fragment(key="tile_ebitda")
-def tile_ebitda():
-    with tile("Quarterly EBITDA Margin", "📐"):
-        ebitda.render(cube_for("ebitda"), tile_key="ebitda")
+@st.fragment(key="tile_cashflow")
+def tile_cashflow():
+    with tile("Cash Flow Trends", "💵"):
+        cashflow.render(cube_for(None), tile_key="cashflow")
 
 
 # Row 1 (4 tiles)
@@ -212,24 +210,22 @@ with c3:
 with c4:
     tile_treemap()
 
-# Row 2 (4 tiles)
-c1, c2, c3, c4 = grid_row(4)
+# Row 2 (3 tiles — Top Customers takes two slots; it's a table with a
+# sparkline and a progress column, and it was the tile most starved of width)
+c1, c2, c3 = grid_row(3, [1, 1, 2])
 with c1:
     tile_waterfall()
 with c2:
     tile_dept_spend()
 with c3:
     tile_top_customers()
-with c4:
-    with tile("Cash Flow Trends", "💵"):
-        cashflow.render(cashflow_df, tile_key="cashflow")
 
 # Row 3 (2 tiles — each takes the width of two grid slots)
 c1, c2 = grid_row(2)
 with c1:
     tile_market_share()
 with c2:
-    tile_ebitda()
+    tile_cashflow()
 
 
 # ---- Perf footer + export ------------------------------------------------------
@@ -246,12 +242,12 @@ def perf_and_export():
     filter_agg_ms = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()
-    tx_f_all = M.filter_raw(tx_full, filters, selection.dim, selection.values, selection.source)
+    facts_f_all = M.filter_raw(facts_full, filters, selection.dim, selection.values, selection.source)
     raw_filter_ms = (time.perf_counter() - t0) * 1000
 
     with st.expander("⏱ Performance & Export", expanded=False):
         fc1, fc2, fc3, fc4, fc5 = st.columns(5)
-        fc1.metric("Raw rows loaded", f"{len(tx_full):,}")
+        fc1.metric("Raw rows loaded", f"{len(facts_full):,}")
         fc2.metric("Cube rows (post-filter)", f"{len(cube_f):,}")
         fc3.metric("Cube build (cache)", f"{cube_build_ms:.2f} ms")
         fc4.metric("Filter + aggregate", f"{filter_agg_ms:.2f} ms")
@@ -266,7 +262,7 @@ def perf_and_export():
         from src import export as E
         ec1, ec2, ec3 = st.columns(3)
         with ec1:
-            st.download_button("Download filtered transactions (CSV)", data=E.csv_bytes(tx_f_all),
+            st.download_button("Download filtered transactions (CSV)", data=E.csv_bytes(facts_f_all),
                                 file_name="gfc_transactions_filtered.csv", mime="text/csv", width='stretch')
         with ec2:
             if st.button("Export dashboard as PDF", width='stretch'):

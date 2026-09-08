@@ -1,6 +1,14 @@
 """
 Filtering + aggregation + KPI derivation.
 
+Data design: there is ONE internal dataset (data/facts.parquet), carrying
+actual and plan side by side on every row. So a tile that compares the two
+filters once and reads two columns, instead of filtering a second budget
+table on the same predicates and merging it back per chart. Cash flow is
+derived here too (cash_flow_by_month) rather than stored, which leaves
+competitor market share as the only other file — it has no join key to the
+fact table, so it stays separate.
+
 Performance design (this is what the perf footer on the dashboard measures):
   - build_cube() runs ONE groupby over the full raw transaction table (down
     to month x quarter x region x product x department x account, ~3-4k
@@ -23,6 +31,7 @@ combination (the invariant the source screenshot violated).
 """
 
 import time
+import zlib
 from dataclasses import dataclass
 
 import numpy as np
@@ -36,8 +45,12 @@ CUBE_DIMS = ["month", "quarter", "region", "product", "department", "account"]
 def build_cube(tx: pd.DataFrame) -> pd.DataFrame:
     """The one expensive full-table groupby. Cached on the raw frame, which
     is stable across the session, so this runs once and is a cache hit
-    on every subsequent interaction regardless of filters."""
-    return tx.groupby(CUBE_DIMS, observed=True)["amount"].sum().reset_index()
+    on every subsequent interaction regardless of filters.
+
+    Actual and plan aggregate together because they live on the same row, so
+    every downstream tile gets both from a single filtered frame — there is
+    no second budget table to filter in parallel and merge back."""
+    return tx.groupby(CUBE_DIMS, observed=True)[["amount", "budget_amount"]].sum().reset_index()
 
 
 def filter_cube(cube: pd.DataFrame, filters: dict, selection_dim: str | None = None,
@@ -181,32 +194,52 @@ def top_customers(tx_filtered: pd.DataFrame, n: int = 8) -> pd.DataFrame:
     return df
 
 
-def department_spend_vs_budget(cube_f: pd.DataFrame, budget_f: pd.DataFrame) -> pd.DataFrame:
-    spend = cube_f[cube_f["account"].isin(["OpEx", "COGS"])].groupby(
-        ["month", "department"], observed=True)["amount"].sum().reset_index()
-    b = budget_f[budget_f["account"].isin(["OpEx", "COGS"])]
-    b_by_month_dept = b.groupby(["month", "department"], observed=True)["budget_amount"].sum().reset_index()
-    merged = spend.merge(b_by_month_dept, on=["month", "department"], how="outer").fillna(0.0)
-    return merged.sort_values(["month", "department"])
+def department_spend_vs_budget(cube_f: pd.DataFrame) -> pd.DataFrame:
+    """Actual vs plan per month x department. One groupby, no join — actual
+    and budget are columns on the same already-filtered rows."""
+    spend = cube_f[cube_f["account"].isin(["OpEx", "COGS"])]
+    return (
+        spend.groupby(["month", "department"], observed=True)[["amount", "budget_amount"]]
+        .sum().reset_index().sort_values(["month", "department"])
+    )
 
 
-def filter_budget(budget: pd.DataFrame, filters: dict) -> pd.DataFrame:
-    mask = pd.Series(True, index=budget.index)
-    for dim in ("region", "product", "department"):
-        values = filters.get(dim) or []
-        if values:
-            mask &= budget[dim].isin(values)
-    return budget[mask]
-
-
-def expense_breakdown(cube_f: pd.DataFrame, budget_f: pd.DataFrame) -> pd.DataFrame:
+def expense_breakdown(cube_f: pd.DataFrame) -> pd.DataFrame:
     """One row per department: actual spend, budget, % to budget."""
-    spend = cube_f[cube_f["account"].isin(["OpEx", "COGS"])].groupby("department", observed=True)["amount"].sum()
-    b = budget_f[budget_f["account"].isin(["OpEx", "COGS"])]
-    b_by_dept = b.groupby("department", observed=True)["budget_amount"].sum()
-    df = pd.DataFrame({"actual": spend, "budget": b_by_dept}).fillna(0.0).reset_index()
+    spend = cube_f[cube_f["account"].isin(["OpEx", "COGS"])]
+    df = spend.groupby("department", observed=True)[["amount", "budget_amount"]].sum().reset_index()
+    df = df.rename(columns={"amount": "actual", "budget_amount": "budget"})
     df["pct_of_budget"] = np.where(df["budget"] > 0, df["actual"] / df["budget"] * 100, 0.0)
     return df.sort_values("actual", ascending=False)
+
+
+CASHFLOW_RATIOS = {"Operating": 0.85, "Investing": -0.18, "Financing": -0.08}
+
+
+def _jitter(key: str, spread: float) -> float:
+    """Stable pseudo-random factor in [-spread, +spread] from a string key.
+
+    zlib.crc32 rather than the built-in hash(): hash() is salted per process
+    for strings, so the cash flow chart would change shape on every restart."""
+    return (zlib.crc32(key.encode()) % 2001 / 1000.0 - 1.0) * spread
+
+
+def cash_flow_by_month(cube_f: pd.DataFrame) -> pd.DataFrame:
+    """Cash flow by the indirect method: start from net income, split it into
+    the three standard flows. Derived from the same filtered rows as every
+    other tile rather than read from a separate table, so — unlike the
+    version that read cashflow.parquet — this one actually responds to the
+    filters and the chart selection like the rest of the dashboard does."""
+    if cube_f.empty:
+        return pd.DataFrame(columns=["month", "flow", "amount"])
+    signed = np.where(cube_f["account"] == "Revenue", cube_f["amount"], -cube_f["amount"])
+    net_income = cube_f.assign(signed=signed).groupby("month", observed=True)["signed"].sum()
+    return pd.DataFrame([
+        {"month": month, "flow": flow,
+         "amount": value * ratio * (1 + _jitter(f"{month}|{flow}", 0.18))}
+        for month, value in net_income.items()
+        for flow, ratio in CASHFLOW_RATIOS.items()
+    ])
 
 
 class Timer:

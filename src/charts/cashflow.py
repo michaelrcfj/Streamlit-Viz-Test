@@ -1,17 +1,24 @@
-"""Cash Flow Trends — Altair layered area, Operating / Investing / Financing."""
+"""Cash Flow Trends — Altair layered area, Operating / Investing / Financing.
+
+Derived from the same fact rows as every other tile (see
+metrics.cash_flow_by_month) rather than read from its own table, so this tile
+now moves with the filters and the chart selection instead of sitting static."""
 
 import altair as alt
 import pandas as pd
 import streamlit as st
 
 from src import theme as T
+from src.data import metrics as M
 
 
-def render(cashflow: pd.DataFrame, tile_key: str):
-    long = cashflow.melt(id_vars="month", value_vars=["Operating", "Investing", "Financing"],
-                          var_name="flow", value_name="amount")
+def render(cube_f: pd.DataFrame, tile_key: str):
+    df = M.cash_flow_by_month(cube_f)
+    if df.empty:
+        st.info("No data in the current filter.")
+        return
     chart = (
-        alt.Chart(long)
+        alt.Chart(df)
         .mark_area(opacity=0.55, interpolate="monotone", line=alt.OverlayMarkDef(strokeWidth=2))
         .encode(
             x=alt.X("month:N", title=None),

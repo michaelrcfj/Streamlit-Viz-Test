@@ -14,8 +14,8 @@ from src.data import metrics as M
 _CHART_H = T.CHART_HEIGHT - T.CONTROL_ROW_HEIGHT  # this tile also has the gauge-variant toggle
 
 
-def render(cube_f: pd.DataFrame, budget_f: pd.DataFrame, tile_key: str):
-    df = M.expense_breakdown(cube_f, budget_f)
+def render(cube_f: pd.DataFrame, tile_key: str):
+    df = M.expense_breakdown(cube_f)
     if df.empty:
         st.info("No data in the current filter.")
         return
